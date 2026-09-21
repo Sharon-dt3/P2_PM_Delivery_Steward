@@ -1,0 +1,74 @@
+[project]
+name = "pm"
+version = "0.1.0"
+description = "P2 PM Delivery Steward -- second agent in the Incubation Pod Three-Agent Delivery Plan (P2 of P1/P2/P3). Starting scope is D11 per ../P3_Agents/docs/MASTER_IMPLEMENTATION_PLAN.md: seed data plus tracker/code-host/risk-log adapters, inheriting P1's Teams reader and publisher outright with zero new adapter code."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pydantic>=2.13.5",
+    "pyyaml>=6.0.3",
+    "python-dotenv>=1.2.3",
+    # PM-04 (D11, master plan): the chat dependency -- reading channel
+    # messages and posting nudges/escalations/digests -- is satisfied by
+    # P1's own adapters.factory (get_teams_reader, get_teams_publisher)
+    # and its underlying MockTeamsReader/LogPublisher classes, with zero
+    # new adapter implementation code in this repo. This path dependency
+    # on the sibling P1 repo is how that inheritance is wired; see
+    # src/pm/adapters/README.md (added in the PM-04 task) for the exact
+    # import points once that task lands.
+    "p1",
+    # CHN-33's extracted spine package (gateway, schema layer, proposals,
+    # write guard, grounding kernel, config-store pattern) -- P1's own
+    # foundation, reused here rather than copy-pasted, per spine's own
+    # docstring ("Reused, not copy-pasted, by every agent built after
+    # P1"). Declared directly (not only transitively through p1) so this
+    # repo's own future code can import spine.* without relying on
+    # whatever p1 happens to re-export.
+    "spine",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.3,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.16.7",
+]
+
+[tool.pytest.ini_options]
+# Mirrors the fix P1 itself needed on 2026-09-21 (see
+# ../P3_Agents/pyproject.toml and its DECISION_LOG.md entry): uv's
+# spine.pth / p1.pth site-packages redirects for path dependencies are
+# unreliable outside a handful of execution contexts, but pytest's own
+# pythonpath option adds these paths itself, independent of site.py's
+# .pth processing. Both sibling repos' src/ trees -- and spine's, since
+# it is a nested path dependency of p1's own workspace, not a top-level
+# dependency of this project -- are listed here directly from day one,
+# rather than waiting to rediscover the exact same ModuleNotFoundError
+# P1 hit mid-project.
+pythonpath = [
+    "src",
+    "../P3_Agents/src",
+    "../P3_Agents/packages/spine/src",
+]
+
+[tool.uv.sources]
+# Both are ordinary path dependencies onto the sibling P3_Agents repo,
+# not a shared uv workspace: this repo is deliberately its own separate
+# repo (per the user's explicit choice of "new sibling folder"), so it
+# cannot join P1's [tool.uv.workspace] the way packages/spine does from
+# inside P3_Agents itself. uv resolves each path project's own
+# pyproject.toml (and therefore its own dependencies -- anthropic,
+# apscheduler, fastapi, etc. for p1) independently of this project's
+# lockfile.
+p1 = { path = "../P3_Agents" }
+# editable = true: p1's own pyproject.toml pulls spine in as a
+# [tool.uv.workspace] member (spine = { workspace = true }), and uv
+# resolves workspace members editable. Without editable = true here too,
+# uv sees two different requirement specs for the same package -- one
+# editable (via p1's workspace), one not (this repo's own plain path
+# dependency) -- and refuses to resolve at all ("conflicting URLs for
+# package `spine`"), confirmed by uv sync on 2026-09-21.
+spine = { path = "../P3_Agents/packages/spine", editable = true }
