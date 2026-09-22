@@ -228,10 +228,14 @@ ITEM_COMMENTS = [
 ]
 
 # ---------------------------------------------------------------------------
-# Commits: PM-01/02's "commit history" -- 12 commits across both
-# sprints. c8 (no item_ref) is Difficulty 6/10; c9 (references PM-021,
-# which is never transitioned -- Difficulty 7/10) is the code-host
-# adapter's own paired edge case.
+# Commits: PM-02's "30-60 commits referencing some but not all items" --
+# 43 commits across both sprints, touching 28 of the 30 items (PM-013,
+# descoped out of Sprint 12, and PM-017, aisha.rahman's quiet item --
+# see Difficulty 3 -- are the two with none). b8888bb (no item_ref) is
+# Difficulty 6/10; b9999cc (references PM-021, which is never
+# transitioned -- Difficulty 7/10) is the code-host adapter's own paired
+# edge case. None of aisha.rahman's own commits below (PM-009/011/030)
+# fall on 2026-09-16 or 2026-09-17 -- Difficulty 3's own two-day gap.
 # ---------------------------------------------------------------------------
 
 COMMITS = [
@@ -250,12 +254,59 @@ COMMITS = [
     {"sha": "ba000dd", "author_id": "noah.becker", "message": "PM-019: dedupe retry queue delivery by idempotency key", "item_ref": "PM-019", "committed_at": "2026-09-13"},
     {"sha": "bb111ee", "author_id": "wei.chen", "message": "PM-020: add token bucket rate limiter to export job endpoint", "item_ref": "PM-020", "committed_at": "2026-09-16"},
     {"sha": "bc222ff", "author_id": "mateo.silva", "message": "PM-027: fix CSV quoting for export job", "item_ref": "PM-027", "committed_at": "2026-09-17"},
+
+    # -- Additional Sprint 12 commit history (follow-up commits on items
+    # that already shipped, plus first coverage for a few that had none).
+    {"sha": "c000001", "author_id": "olivia.dupont", "message": "PM-001: add retry backoff jitter tests", "item_ref": "PM-001", "committed_at": "2026-08-27"},
+    {"sha": "c000002", "author_id": "wei.chen", "message": "PM-002: cache eviction edge case fix", "item_ref": "PM-002", "committed_at": "2026-08-28"},
+    {"sha": "c000003", "author_id": "wei.chen", "message": "PM-003: auth token refresh rollout", "item_ref": "PM-003", "committed_at": "2026-08-30"},
+    {"sha": "c000004", "author_id": "noah.becker", "message": "PM-004: onboarding wizard step polish", "item_ref": "PM-004", "committed_at": "2026-08-29"},
+    {"sha": "c000005", "author_id": "mateo.silva", "message": "PM-005: reporting dashboard v1 styling pass", "item_ref": "PM-005", "committed_at": "2026-08-30"},
+    {"sha": "c000006", "author_id": "olivia.dupree", "message": "PM-006: search index base schema draft", "item_ref": "PM-006", "committed_at": "2026-08-28"},
+    {"sha": "c000007", "author_id": "olivia.dupree", "message": "PM-006: search index base schema finalize", "item_ref": "PM-006", "committed_at": "2026-08-30"},
+    {"sha": "c000008", "author_id": "noah.becker", "message": "PM-007: retry queue worker error handling", "item_ref": "PM-007", "committed_at": "2026-08-29"},
+    {"sha": "c000009", "author_id": "mateo.silva", "message": "PM-008: export job pipeline v1 skeleton", "item_ref": "PM-008", "committed_at": "2026-08-30"},
+    {"sha": "c000010", "author_id": "mateo.silva", "message": "PM-008: export job pipeline v1 finalize", "item_ref": "PM-008", "committed_at": "2026-09-03"},
+    # aisha.rahman's own commits (PM-009/PM-011) -- both well clear of
+    # her 2026-09-16/09-17 gap (Difficulty 3), since Sprint 12 closed
+    # 2026-09-06.
+    {"sha": "c000011", "author_id": "aisha.rahman", "message": "PM-009: onboarding wizard integration test scaffolding", "item_ref": "PM-009", "committed_at": "2026-08-31"},
+    {"sha": "c000012", "author_id": "aisha.rahman", "message": "PM-009: onboarding wizard integration tests finalize", "item_ref": "PM-009", "committed_at": "2026-09-02"},
+    {"sha": "c000013", "author_id": "olivia.dupont", "message": "PM-010: billing sync monitoring dashboard wiring", "item_ref": "PM-010", "committed_at": "2026-09-02"},
+    {"sha": "c000014", "author_id": "olivia.dupont", "message": "PM-010: billing sync monitoring dashboard alerts", "item_ref": "PM-010", "committed_at": "2026-09-03"},
+    {"sha": "c000015", "author_id": "aisha.rahman", "message": "PM-011: auth flow token lifecycle doc draft", "item_ref": "PM-011", "committed_at": "2026-09-03"},
+    {"sha": "c000016", "author_id": "aisha.rahman", "message": "PM-011: auth flow token lifecycle doc finalize", "item_ref": "PM-011", "committed_at": "2026-09-04"},
+    {"sha": "c000017", "author_id": "wei.chen", "message": "PM-012: remove legacy reporting dashboard queries", "item_ref": "PM-012", "committed_at": "2026-09-04"},
+
+    # -- Additional Sprint 13 commit history.
+    {"sha": "c000018", "author_id": "olivia.dupree", "message": "PM-014: attempt search index workaround pending migration", "item_ref": "PM-014", "committed_at": "2026-09-11"},
+    {"sha": "c000019", "author_id": "wei.chen", "message": "PM-015: stub export job null-case handling pending product decision", "item_ref": "PM-015", "committed_at": "2026-09-14"},
+    # PM-018 is unassigned in the tracker (Difficulty 4) but the work
+    # still happened -- this commit is deliberately authored by someone
+    # other than an (absent) assignee.
+    {"sha": "c000020", "author_id": "mateo.silva", "message": "PM-018: address caching layer PR review comments", "item_ref": "PM-018", "committed_at": "2026-09-12"},
+    {"sha": "c000021", "author_id": "olivia.dupont", "message": "PM-022: billing sync vendor API migration scaffolding", "item_ref": "PM-022", "committed_at": "2026-09-12"},
+    {"sha": "c000022", "author_id": "wei.chen", "message": "PM-023: add retry logging around auth flow token refresh", "item_ref": "PM-023", "committed_at": "2026-09-09"},
+    {"sha": "c000023", "author_id": "olivia.dupont", "message": "PM-024: instrument billing sync nightly job timing", "item_ref": "PM-024", "committed_at": "2026-09-10"},
+    {"sha": "c000024", "author_id": "noah.becker", "message": "PM-025: onboarding wizard analytics event scaffolding", "item_ref": "PM-025", "committed_at": "2026-09-09"},
+    {"sha": "c000025", "author_id": "noah.becker", "message": "PM-025: onboarding wizard analytics events finalize", "item_ref": "PM-025", "committed_at": "2026-09-11"},
+    {"sha": "c000026", "author_id": "olivia.dupree", "message": "PM-026: search index reindex job monitoring draft", "item_ref": "PM-026", "committed_at": "2026-09-09"},
+    {"sha": "c000027", "author_id": "olivia.dupree", "message": "PM-026: search index reindex job monitoring finalize", "item_ref": "PM-026", "committed_at": "2026-09-12"},
+    {"sha": "c000028", "author_id": "wei.chen", "message": "PM-028: reporting dashboard filter persistence backend", "item_ref": "PM-028", "committed_at": "2026-09-13"},
+    {"sha": "c000029", "author_id": "olivia.dupont", "message": "PM-029: caching layer TTL tuning experiment", "item_ref": "PM-029", "committed_at": "2026-09-14"},
+    {"sha": "c000030", "author_id": "aisha.rahman", "message": "PM-030: auth flow rate limit header draft", "item_ref": "PM-030", "committed_at": "2026-09-10"},
+    {"sha": "c000031", "author_id": "aisha.rahman", "message": "PM-030: auth flow rate limit headers finalize", "item_ref": "PM-030", "committed_at": "2026-09-13"},
 ]
 
 # ---------------------------------------------------------------------------
-# Commitments: PM-01/02's "delivery commitments" -- cm1 is Difficulty
-# 9/10 (a relative due date only); the rest carry a proper ISO date, for
-# contrast.
+# Commitments: PM-02's "six to ten commitments, some overdue" -- 8
+# total. cm1 is Difficulty 9/10 (a relative due date only, the only
+# NULL due_date_iso row -- test_difficulty_9 depends on there being
+# exactly one). cm5-cm8 are the "some overdue" half: each has a
+# due_date_iso before ANCHOR_DATE (2026-09-18) against an item that is
+# still open (blocked, or in PM-021's case never even transitioned) as
+# of that date -- a commitment that was made and then missed, not just
+# one due in the future.
 # ---------------------------------------------------------------------------
 
 COMMITMENTS = [
@@ -264,6 +315,14 @@ COMMITMENTS = [
     {"member_id": "olivia.dupont", "item_id": "PM-022", "text": "Vendor says the new billing API will be ready 2026-09-25; cutting over once it's live.", "due_date_iso": "2026-09-25", "due_date_text": None, "made_at": "2026-09-12", "source_message_id": None},
     {"member_id": "wei.chen", "item_id": "PM-028", "text": "Filter persistence should land by 2026-09-19.", "due_date_iso": "2026-09-19", "due_date_text": None, "made_at": "2026-09-14", "source_message_id": None},
     {"member_id": "noah.becker", "item_id": "PM-019", "text": "Idempotency-key fix for retry queue duplicates is verifying in staging, done by 2026-09-18.", "due_date_iso": "2026-09-18", "due_date_text": None, "made_at": "2026-09-13", "source_message_id": None},
+    # Overdue: PM-023 is still blocked as of ANCHOR_DATE, past this commitment's own due date.
+    {"member_id": "wei.chen", "item_id": "PM-023", "text": "Should have the staging auth flow failures root-caused by 2026-09-15.", "due_date_iso": "2026-09-15", "due_date_text": None, "made_at": "2026-09-11", "source_message_id": None},
+    # Overdue: PM-014 is still blocked as of ANCHOR_DATE (Difficulty 1's own stale blocker).
+    {"member_id": "olivia.dupree", "item_id": "PM-014", "text": "Expect the staging DB migration to unblock the search index work by 2026-09-16.", "due_date_iso": "2026-09-16", "due_date_text": None, "made_at": "2026-09-10", "source_message_id": None},
+    # Overdue: PM-024 is still blocked as of ANCHOR_DATE.
+    {"member_id": "olivia.dupont", "item_id": "PM-024", "text": "Nightly billing sync SLA fix should land by 2026-09-17.", "due_date_iso": "2026-09-17", "due_date_text": None, "made_at": "2026-09-11", "source_message_id": None},
+    # Overdue: PM-021 was never even transitioned out of backlog (Difficulty 7).
+    {"member_id": "noah.becker", "item_id": "PM-021", "text": "Backoff jitter for the retry queue should be in by 2026-09-14.", "due_date_iso": "2026-09-14", "due_date_text": None, "made_at": "2026-09-08", "source_message_id": None},
 ]
 
 # ---------------------------------------------------------------------------

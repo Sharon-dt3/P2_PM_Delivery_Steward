@@ -9,6 +9,7 @@ from pm.adapters.code_host import (
     CodeHostMock,
     CommitNotFoundError,
 )
+from pm.seed.build import COMMITS
 
 
 @pytest.fixture()
@@ -17,7 +18,7 @@ def code_host(seeded_db_path) -> CodeHost:
 
 
 def test_list_commits_returns_every_seeded_commit(code_host):
-    assert len(code_host.list_commits()) == 12
+    assert len(code_host.list_commits()) == len(COMMITS)
 
 
 def test_list_commits_bounded_by_since(code_host):
@@ -47,7 +48,7 @@ def test_commit_references_an_item_that_was_never_transitioned(code_host):
 
 def test_get_branch_state_for_main(code_host):
     state = code_host.get_branch_state(MAIN_REF)
-    assert state.commit_count == 12
+    assert state.commit_count == len(COMMITS)
     assert state.head_sha is not None
 
 

@@ -5,7 +5,9 @@ difficulties specifically."""
 
 from __future__ import annotations
 
-from pm.seed.build import ASSIGNEES, ITEM_TRANSITIONS, ITEMS, RISKS, SPRINTS
+from datetime import date
+
+from pm.seed.build import ANCHOR_DATE, ASSIGNEES, COMMITMENTS, COMMITS, ITEM_TRANSITIONS, ITEMS, RISKS, SPRINTS
 
 
 def test_item_count_is_within_the_planned_25_to_40_range():
@@ -85,3 +87,32 @@ def test_risk_log_has_three_entries_two_matching_current_blockers(seeded_conn):
     non_matching = [risk for risk in risks if risk["related_item_id"] not in blocker_ids]
     assert len(matching) == 2
     assert len(non_matching) == 1
+
+
+def test_commit_count_is_within_the_planned_30_to_60_range():
+    """PM-02's own DoD line: "30-60 commits referencing some but not
+    all items.\""""
+    assert 30 <= len(COMMITS) <= 60
+
+
+def test_commits_reference_some_but_not_all_items():
+    referenced_item_ids = {c["item_ref"] for c in COMMITS if c["item_ref"] is not None}
+    all_item_ids = {item["id"] for item in ITEMS}
+    assert referenced_item_ids  # some
+    assert referenced_item_ids < all_item_ids  # not all -- a strict subset
+
+
+def test_commitment_count_is_within_the_planned_6_to_10_range():
+    """PM-02's own DoD line: "six to ten commitments, some overdue.\""""
+    assert 6 <= len(COMMITMENTS) <= 10
+
+
+def test_some_commitments_are_overdue_as_of_the_anchor_date():
+    """"Overdue" here means a real due_date_iso that has already passed
+    ANCHOR_DATE while nothing in this seed shows the commitment kept --
+    not merely a due date sitting in the future."""
+    overdue = [
+        c for c in COMMITMENTS
+        if c["due_date_iso"] is not None and date.fromisoformat(c["due_date_iso"]) < ANCHOR_DATE
+    ]
+    assert len(overdue) >= 2
