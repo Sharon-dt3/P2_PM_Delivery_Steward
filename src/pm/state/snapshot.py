@@ -1,14 +1,16 @@
 """
-Project-state snapshot (PM-05).
+Project-state snapshot (PM-05, extended by PM-08).
 
-Normalises tracker, code-host and channel reads into one persisted,
-timestamped record, so a later run can diff against an earlier one.
-Nothing here calls a model -- this is purely deterministic normalisation
-over already-typed adapter output (Tracker/CodeHost/TeamsReader, PM-04's
-own interfaces). Commits and channel messages already come back from
-their adapters in a shape with nothing to normalise (a commit's
-`item_ref` is either a real item id or None; a TeamsMessage is already
-one fixed shape) -- both are held here unchanged, not re-modelled.
+Normalises tracker, code-host, channel, risk-log and commitments reads
+into one persisted, timestamped record, so a later run can diff against
+an earlier one, and so PM-08's morning brief can compute every one of its
+facts from this one object alone ("the facts come from the snapshot" --
+that row's own words). Nothing here calls a model -- this is purely
+deterministic normalisation over already-typed adapter output (Tracker/
+CodeHost/TeamsReader/RiskLogStore/CommitmentsStore, PM-04/PM-08's own
+interfaces). Commits, channel messages, sprints, commitments and risks
+already come back from their adapters in a shape with nothing to
+normalise -- all five are held here unchanged, not re-modelled.
 
 The one real piece of normalisation is a tracker item's status:
 
@@ -21,6 +23,13 @@ either way, so "UNMAPPED" only ever *flags* an unrecognised status; it
 never hides what that status actually was. PM-03's own planted
 free-text-status difficulty (PM-022, "waiting_on_vendor") is exactly the
 live case this exists for -- see test_state_snapshot.py.
+
+sprints/commitments/risks default to an empty list on the model itself
+(rather than being required) so an already-persisted PM-05-era snapshot
+row -- built before PM-08 existed -- still deserialises via
+pm.state.store.read_snapshot() without error; it just carries no data for
+these three fields, which is the honest state of affairs for a snapshot
+that genuinely predates them.
 """
 
 from __future__ import annotations
@@ -31,7 +40,9 @@ from p1.adapters.teams_reader import TeamsMessage, TeamsReader
 from pydantic import BaseModel
 
 from pm.adapters.code_host import CodeHost, Commit
-from pm.adapters.tracker import Tracker, TrackerItem
+from pm.adapters.commitments import Commitment, CommitmentsStore
+from pm.adapters.risk_log import Risk, RiskLogStore
+from pm.adapters.tracker import Sprint, Tracker, TrackerItem
 from pm.seed.build import CANONICAL_STATUSES, CHANNEL_ID
 
 UNMAPPED = "UNMAPPED"
@@ -59,6 +70,9 @@ class ProjectSnapshot(BaseModel):
     items: list[NormalizedItem]
     commits: list[Commit]
     channel: ChannelSnapshot
+    sprints: list[Sprint] = []
+    commitments: list[Commitment] = []
+    risks: list[Risk] = []
 
 
 def _now_iso() -> str:
@@ -89,12 +103,21 @@ def build_snapshot(
     teams_reader: TeamsReader,
     channel_id: str,
     *,
+    risk_log: RiskLogStore,
+    commitments_store: CommitmentsStore,
     taken_at: str | None = None,
 ) -> ProjectSnapshot:
-    """Reads all three sources once and normalises them into one
-    ProjectSnapshot. Pure normalisation over what the three adapters
+    """Reads all five sources once and normalises them into one
+    ProjectSnapshot. Pure normalisation over what the five adapters
     return -- this function performs no persistence of its own (see
     store.py for that) and calls no model.
+
+    risk_log and commitments_store are keyword-only and required (not
+    defaulted) so every call site stays fully explicit about which
+    adapters it's reading from, the same posture tracker/code_host/
+    teams_reader already take -- PM-08 added these two once its own
+    facts needed them; build_current_snapshot() below is the one place
+    that still offers no-argument convenience wiring.
 
     taken_at defaults to now (UTC, ISO 8601) if not given explicitly; two
     calls a moment apart naturally get two different values, which is
@@ -104,18 +127,32 @@ def build_snapshot(
     commits = code_host.list_commits()
     message_page = teams_reader.list_messages(channel_id)
     channel = ChannelSnapshot(channel_id=channel_id, messages=message_page.messages)
-    return ProjectSnapshot(taken_at=taken_at, items=items, commits=commits, channel=channel)
+    sprints = tracker.list_sprints()
+    commitments = commitments_store.list_commitments()
+    risks = risk_log.list_risks()
+    return ProjectSnapshot(
+        taken_at=taken_at,
+        items=items,
+        commits=commits,
+        channel=channel,
+        sprints=sprints,
+        commitments=commitments,
+        risks=risks,
+    )
 
 
 def build_current_snapshot(db_path=None, *, taken_at: str | None = None) -> ProjectSnapshot:
-    """Convenience wiring for the common case: TrackerMock/CodeHostMock
-    over this repo's own seeded db, and P1's Teams reader over its own
-    real fixture data (pm.adapters.teams.get_teams_reader) -- the same
-    default-wiring role get_teams_reader()/get_teams_publisher() already
-    play for the chat adapter itself. Callers who want different
-    adapters (a future real tracker/code-host implementation, or a test
-    double) should call build_snapshot() directly instead."""
+    """Convenience wiring for the common case: TrackerMock/CodeHostMock/
+    RiskLogMock/CommitmentsMock over this repo's own seeded db, and P1's
+    Teams reader over its own real fixture data
+    (pm.adapters.teams.get_teams_reader) -- the same default-wiring role
+    get_teams_reader()/get_teams_publisher() already play for the chat
+    adapter itself. Callers who want different adapters (a future real
+    tracker/code-host implementation, or a test double) should call
+    build_snapshot() directly instead."""
     from pm.adapters.code_host import CodeHostMock
+    from pm.adapters.commitments import CommitmentsMock
+    from pm.adapters.risk_log import RiskLogMock
     from pm.adapters.teams import get_teams_reader
     from pm.adapters.tracker import TrackerMock
     from pm.storage.db import DEFAULT_DB_PATH
@@ -124,4 +161,14 @@ def build_current_snapshot(db_path=None, *, taken_at: str | None = None) -> Proj
     tracker = TrackerMock(db_path=resolved_db_path)
     code_host = CodeHostMock(db_path=resolved_db_path)
     teams_reader = get_teams_reader(db_path=resolved_db_path)
-    return build_snapshot(tracker, code_host, teams_reader, CHANNEL_ID, taken_at=taken_at)
+    risk_log = RiskLogMock(db_path=resolved_db_path)
+    commitments_store = CommitmentsMock(db_path=resolved_db_path)
+    return build_snapshot(
+        tracker,
+        code_host,
+        teams_reader,
+        CHANNEL_ID,
+        risk_log=risk_log,
+        commitments_store=commitments_store,
+        taken_at=taken_at,
+    )

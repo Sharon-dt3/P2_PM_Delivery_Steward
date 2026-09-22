@@ -25,6 +25,8 @@ from __future__ import annotations
 from pydantic import BaseModel
 
 from pm.adapters.code_host import CodeHostMock
+from pm.adapters.commitments import CommitmentsMock
+from pm.adapters.risk_log import RiskLogMock
 from pm.adapters.teams import get_teams_reader
 from pm.adapters.tracker import TrackerMock
 from pm.eval.golden_cases import END_OF_DAY, GOLDEN_CASE_3, MORNING, HandLabel
@@ -51,9 +53,27 @@ def build_case_3_delta(db_path=None) -> SnapshotDelta:
     tracker = TrackerMock(db_path=resolved_db_path)
     code_host = CodeHostMock(db_path=resolved_db_path)
     teams_reader = get_teams_reader(db_path=resolved_db_path)
+    risk_log = RiskLogMock(db_path=resolved_db_path)
+    commitments_store = CommitmentsMock(db_path=resolved_db_path)
 
-    before = build_snapshot(tracker, code_host, teams_reader, CHANNEL_ID, taken_at=MORNING)
-    after = build_snapshot(tracker, code_host, teams_reader, CHANNEL_ID, taken_at=END_OF_DAY)
+    before = build_snapshot(
+        tracker,
+        code_host,
+        teams_reader,
+        CHANNEL_ID,
+        risk_log=risk_log,
+        commitments_store=commitments_store,
+        taken_at=MORNING,
+    )
+    after = build_snapshot(
+        tracker,
+        code_host,
+        teams_reader,
+        CHANNEL_ID,
+        risk_log=risk_log,
+        commitments_store=commitments_store,
+        taken_at=END_OF_DAY,
+    )
     return compute_delta(before, after, tracker)
 
 

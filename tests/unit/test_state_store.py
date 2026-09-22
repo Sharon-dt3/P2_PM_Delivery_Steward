@@ -6,6 +6,8 @@ from __future__ import annotations
 import pytest
 
 from pm.adapters.code_host import CodeHostMock
+from pm.adapters.commitments import CommitmentsMock
+from pm.adapters.risk_log import RiskLogMock
 from pm.adapters.teams import get_teams_reader
 from pm.adapters.tracker import TrackerMock
 from pm.seed.build import CHANNEL_ID
@@ -68,9 +70,17 @@ def test_two_consecutive_snapshots_persist_and_are_independently_readable(seeded
     tracker = TrackerMock(db_path=seeded_db_path)
     code_host = CodeHostMock(db_path=seeded_db_path)
     teams_reader = get_teams_reader(db_path=seeded_db_path)
+    risk_log = RiskLogMock(db_path=seeded_db_path)
+    commitments_store = CommitmentsMock(db_path=seeded_db_path)
 
     first = build_snapshot(
-        tracker, code_host, teams_reader, CHANNEL_ID, taken_at="2026-09-18T10:00:00+00:00"
+        tracker,
+        code_host,
+        teams_reader,
+        CHANNEL_ID,
+        risk_log=risk_log,
+        commitments_store=commitments_store,
+        taken_at="2026-09-18T10:00:00+00:00",
     )
     save_snapshot(first, db_path=seeded_db_path)
 
@@ -80,7 +90,13 @@ def test_two_consecutive_snapshots_persist_and_are_independently_readable(seeded
     tracker.transition("PM-028", "blocked")
 
     second = build_snapshot(
-        tracker, code_host, teams_reader, CHANNEL_ID, taken_at="2026-09-18T10:05:00+00:00"
+        tracker,
+        code_host,
+        teams_reader,
+        CHANNEL_ID,
+        risk_log=risk_log,
+        commitments_store=commitments_store,
+        taken_at="2026-09-18T10:05:00+00:00",
     )
     save_snapshot(second, db_path=seeded_db_path)
 

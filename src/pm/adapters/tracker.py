@@ -81,6 +81,19 @@ class TransitionRecord(BaseModel):
     changed_at: str
 
 
+class Sprint(BaseModel):
+    """Sprint metadata (PM-08's own dependency: "sprint day and scope"
+    needs to know which sprint is current as of a given moment, and a
+    sprint's own date range, to answer that). A real tracker product
+    exposes this alongside items (e.g. Jira's Sprint resource), so it
+    lives on this same interface rather than a separate adapter."""
+
+    id: str
+    display_name: str
+    start_date: str  # ISO date, inclusive
+    end_date: str  # ISO date, inclusive
+
+
 class ItemFilter(BaseModel):
     """Every set field is AND-ed together; an unset (None/False) field
     matches everything. status/assignee_id/sprint_id are plain string
@@ -143,6 +156,13 @@ class Tracker(ABC):
         error); raises ItemNotFoundError only if item_id itself doesn't
         exist."""
 
+    @abstractmethod
+    def list_sprints(self) -> list[Sprint]:
+        """Every sprint on record, in no particular guaranteed order --
+        callers that need "the current one" (PM-08) resolve that
+        themselves from each sprint's own start_date/end_date against
+        whatever moment they care about."""
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -167,6 +187,15 @@ def _row_to_transition(row: sqlite3.Row) -> TransitionRecord:
         from_status=row["from_status"],
         to_status=row["to_status"],
         changed_at=row["changed_at"],
+    )
+
+
+def _row_to_sprint(row: sqlite3.Row) -> Sprint:
+    return Sprint(
+        id=row["id"],
+        display_name=row["display_name"],
+        start_date=row["start_date"],
+        end_date=row["end_date"],
     )
 
 
@@ -289,3 +318,8 @@ class TrackerMock(Tracker):
                 (item_id,),
             ).fetchall()
         return [_row_to_transition(row) for row in rows]
+
+    def list_sprints(self) -> list[Sprint]:
+        with self._conn() as conn:
+            rows = conn.execute("SELECT * FROM sprints ORDER BY id").fetchall()
+        return [_row_to_sprint(row) for row in rows]

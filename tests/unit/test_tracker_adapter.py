@@ -6,6 +6,7 @@ from pm.adapters.tracker import (
     DuplicateItemError,
     ItemFilter,
     ItemNotFoundError,
+    Sprint,
     Tracker,
     TrackerItem,
     TrackerMock,
@@ -144,3 +145,16 @@ def test_list_transitions_reflects_a_transition_just_recorded(tracker):
     history = tracker.list_transitions("PM-021")
     assert len(history) == 1
     assert history[0].to_status == "in_progress"
+
+
+def test_list_sprints_returns_both_seeded_sprints(tracker):
+    sprints = tracker.list_sprints()
+    assert {sprint.id for sprint in sprints} == {"sprint-12", "sprint-13"}
+    assert all(isinstance(sprint, Sprint) for sprint in sprints)
+
+
+def test_list_sprints_carries_each_sprints_own_date_range(tracker):
+    sprints = {sprint.id: sprint for sprint in tracker.list_sprints()}
+    assert sprints["sprint-13"].start_date == "2026-09-07"
+    assert sprints["sprint-13"].end_date == "2026-09-20"
+    assert sprints["sprint-13"].display_name == "Sprint 13"

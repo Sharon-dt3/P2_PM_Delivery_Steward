@@ -20,6 +20,8 @@ this window, so nothing else should show up.
 from __future__ import annotations
 
 from pm.adapters.code_host import CodeHostMock
+from pm.adapters.commitments import CommitmentsMock
+from pm.adapters.risk_log import RiskLogMock
 from pm.adapters.teams import get_teams_reader
 from pm.adapters.tracker import TrackerMock
 from pm.seed.build import CHANNEL_ID
@@ -34,7 +36,17 @@ def _snapshot(seeded_db_path, taken_at: str):
     tracker = TrackerMock(db_path=seeded_db_path)
     code_host = CodeHostMock(db_path=seeded_db_path)
     teams_reader = get_teams_reader(db_path=seeded_db_path)
-    return build_snapshot(tracker, code_host, teams_reader, CHANNEL_ID, taken_at=taken_at)
+    risk_log = RiskLogMock(db_path=seeded_db_path)
+    commitments_store = CommitmentsMock(db_path=seeded_db_path)
+    return build_snapshot(
+        tracker,
+        code_host,
+        teams_reader,
+        CHANNEL_ID,
+        risk_log=risk_log,
+        commitments_store=commitments_store,
+        taken_at=taken_at,
+    )
 
 
 def test_delta_finds_exactly_the_three_golden_case_3_changes(seeded_db_path):
