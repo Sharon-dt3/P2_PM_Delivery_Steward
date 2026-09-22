@@ -43,7 +43,11 @@ def main() -> None:
 
     print(f"Morning brief -- as of {facts.as_of}")
     print()
-    print(brief.narrative)
+    print(brief.content)
+
+    for section, failures in brief.dropped.items():
+        for failure in failures:
+            print(f"[dropped from {section}] {failure['reason']}: {failure['detail']}")
 
 
 if __name__ == "__main__":
