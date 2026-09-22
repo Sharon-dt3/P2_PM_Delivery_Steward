@@ -65,6 +65,22 @@ class ItemComment(BaseModel):
     created_at: str
 
 
+class TransitionRecord(BaseModel):
+    """One row of an item's transition history (PM-06's own dependency:
+    detecting same-day flap-and-return churn, e.g. PM-016, needs the full
+    ordered history, not just the item's current status). changed_at is
+    whatever transition() wrote -- either a full ISO timestamp (mock's own
+    _now_iso()) or the seed data's date-only string -- callers that need to
+    compare moments across mixed granularities parse this themselves rather
+    than relying on plain string ordering (see pm/state/diff.py's
+    _parse_moment())."""
+
+    item_id: str
+    from_status: str
+    to_status: str
+    changed_at: str
+
+
 class ItemFilter(BaseModel):
     """Every set field is AND-ed together; an unset (None/False) field
     matches everything. status/assignee_id/sprint_id are plain string
@@ -117,6 +133,16 @@ class Tracker(ABC):
         it otherwise. Raises ItemNotFoundError if item_id doesn't
         exist."""
 
+    @abstractmethod
+    def list_transitions(self, item_id: str) -> list[TransitionRecord]:
+        """Every transition row item_id has ever recorded, oldest first --
+        the full history, not just the current status, so a caller can
+        detect churn (e.g. a same-day move to done and back) that a single
+        before/after status comparison would miss entirely. Returns an
+        empty list for an item with no recorded transitions (not an
+        error); raises ItemNotFoundError only if item_id itself doesn't
+        exist."""
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -132,6 +158,15 @@ def _row_to_item(row: sqlite3.Row) -> TrackerItem:
         created_at=row["created_at"],
         blocked_since=row["blocked_since"],
         source_message_id=row["source_message_id"],
+    )
+
+
+def _row_to_transition(row: sqlite3.Row) -> TransitionRecord:
+    return TransitionRecord(
+        item_id=row["item_id"],
+        from_status=row["from_status"],
+        to_status=row["to_status"],
+        changed_at=row["changed_at"],
     )
 
 
@@ -235,3 +270,22 @@ class TrackerMock(Tracker):
             conn.commit()
             updated_row = conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
         return _row_to_item(updated_row)
+
+    def list_transitions(self, item_id: str) -> list[TransitionRecord]:
+        with self._conn() as conn:
+            exists = conn.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone()
+            if exists is None:
+                raise ItemNotFoundError(item_id)
+            # Ordered by id (insertion order), not changed_at: changed_at
+            # mixes date-only and full-timestamp strings (see this
+            # module's docstring on TransitionRecord), which don't sort
+            # reliably against each other as plain strings. Every writer
+            # -- this class's own transition(), and the seed data's
+            # _history() helper -- appends rows in true chronological
+            # order, so the autoincrement id is a faithful proxy for
+            # "when it actually happened."
+            rows = conn.execute(
+                "SELECT * FROM item_transitions WHERE item_id = ? ORDER BY id",
+                (item_id,),
+            ).fetchall()
+        return [_row_to_transition(row) for row in rows]

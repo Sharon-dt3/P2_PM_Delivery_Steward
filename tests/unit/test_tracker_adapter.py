@@ -9,6 +9,7 @@ from pm.adapters.tracker import (
     Tracker,
     TrackerItem,
     TrackerMock,
+    TransitionRecord,
 )
 
 
@@ -108,3 +109,38 @@ def test_transition_away_from_blocked_clears_blocked_since(tracker):
 def test_transition_raises_for_unknown_item(tracker):
     with pytest.raises(ItemNotFoundError):
         tracker.transition("PM-999", "done")
+
+
+def test_list_transitions_returns_full_seeded_history_in_order(tracker):
+    """PM-016's own planted difficulty (done, then reopened hours later,
+    same calendar day): the full three-row history has to come back in
+    the order it actually happened, not just the item's current status
+    (which is back to in_progress -- net-unchanged from where it
+    started)."""
+    history = tracker.list_transitions("PM-016")
+    assert [(t.from_status, t.to_status) for t in history] == [
+        ("backlog", "in_progress"),
+        ("in_progress", "done"),
+        ("done", "in_progress"),
+    ]
+    assert all(isinstance(t, TransitionRecord) for t in history)
+    assert history[1].changed_at == "2026-09-16T10:00:00"
+    assert history[2].changed_at == "2026-09-16T15:30:00"
+
+
+def test_list_transitions_is_empty_for_an_item_with_no_history(tracker):
+    """PM-013: descoped straight out of backlog, no transitions at all --
+    an empty list, not an error."""
+    assert tracker.list_transitions("PM-013") == []
+
+
+def test_list_transitions_raises_for_unknown_item(tracker):
+    with pytest.raises(ItemNotFoundError):
+        tracker.list_transitions("PM-999")
+
+
+def test_list_transitions_reflects_a_transition_just_recorded(tracker):
+    tracker.transition("PM-021", "in_progress")
+    history = tracker.list_transitions("PM-021")
+    assert len(history) == 1
+    assert history[0].to_status == "in_progress"
