@@ -1,10 +1,13 @@
-"""PM-08 (expression) + PM-09 (reference-or-drop grounding).
+"""PM-08 (expression) + PM-09 (reference-or-drop grounding) + PM-10
+(honest absence).
 
-This module's own row-level acceptance tests, both literal:
+This module's own row-level acceptance tests, all three literal:
 
   PM-08: "Regenerating on the same snapshot yields identical facts;
   wording may differ."
   PM-09: "A hand-forged unreferenced line is dropped and logged."
+  PM-10: "The zero-activity assignee appears with an explicit no-update
+  line."
 
 No real network call happens anywhere in this file. FakeGateway mirrors
 P1's own testing convention exactly (see e.g.
@@ -259,3 +262,66 @@ def test_committed_facts_can_ground_on_the_commitment_id_when_the_item_id_is_abs
     assert brief.dropped["committed"] == []
     assert len(brief.sections["committed"]) == 1
     assert "mateo.silva" in brief.content
+
+
+def _person_block(content: str, assignee_id: str) -> str:
+    """The rendered lines for exactly one person's own "## <id>" heading,
+    up to (not including) the next "## " heading or the end of the
+    content -- so a test can check what a person's own block says
+    without being tripped up by another person's or the blockers
+    section's lines."""
+    after_heading = content.split(f"## {assignee_id}\n", 1)[1]
+    return after_heading.split("\n## ", 1)[0]
+
+
+def test_the_zero_activity_assignee_appears_with_an_explicit_no_update_line():
+    """PM-10's own acceptance test, literal: "The zero-activity assignee
+    appears with an explicit no-update line." sofia.lindqvist owns no
+    committed/delivered/pending/blocked fact and authored no commit
+    (commit_count=0) -- has_activity is False -- while wei.chen, in the
+    same brief, has one delivered item and gets the normal per-bucket
+    rendering. No model call happens for sofia at all: she contributes
+    zero facts to every section, and her line is rendered directly by
+    _render_brief, not generated -- see morning_brief.py's own
+    docstring on why an absence needs no prose."""
+    facts = MorningBriefFacts(
+        as_of="2026-09-16T23:59:59+00:00",
+        sprint=None,
+        people=[
+            PersonFacts(
+                assignee_id="wei.chen",
+                committed=[],
+                delivered=[ItemFact(item_id="PM-002", title="Implement caching layer eviction policy")],
+                pending=[],
+                blocked=[],
+            ),
+            PersonFacts(
+                assignee_id="sofia.lindqvist",
+                committed=[],
+                delivered=[],
+                pending=[],
+                blocked=[],
+                commit_count=0,
+            ),
+        ],
+        blockers=[],
+    )
+    assert facts.people[1].has_activity is False
+
+    gateway = FakeGateway([_lines_response(("Wei Chen delivered PM-002.", "item:PM-002"))])
+
+    brief = generate_morning_brief(facts, gateway)
+
+    # only wei.chen's one delivered fact ever reaches the model; sofia's
+    # zero-activity line is never sent to it, and never dropped/logged
+    # either -- there is nothing ungrounded about it, there is simply
+    # nothing to say.
+    assert gateway.calls == 1
+
+    sofia_block = _person_block(brief.content, "sofia.lindqvist")
+    assert sofia_block.strip() == "- No update: no tracker activity or commits recorded."
+    assert "none." not in sofia_block  # the old four-bucket rendering, not this one
+
+    wei_block = _person_block(brief.content, "wei.chen")
+    assert "Wei Chen delivered PM-002." in wei_block
+    assert "No update" not in wei_block

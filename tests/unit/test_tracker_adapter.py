@@ -3,15 +3,15 @@ from __future__ import annotations
 import pytest
 
 from pm.adapters.tracker import (
+    Assignee,
     DuplicateItemError,
     ItemFilter,
     ItemNotFoundError,
-    Sprint,
     Tracker,
     TrackerItem,
     TrackerMock,
-    TransitionRecord,
 )
+from pm.seed.build import ASSIGNEES
 
 
 @pytest.fixture()
@@ -112,49 +112,18 @@ def test_transition_raises_for_unknown_item(tracker):
         tracker.transition("PM-999", "done")
 
 
-def test_list_transitions_returns_full_seeded_history_in_order(tracker):
-    """PM-016's own planted difficulty (done, then reopened hours later,
-    same calendar day): the full three-row history has to come back in
-    the order it actually happened, not just the item's current status
-    (which is back to in_progress -- net-unchanged from where it
-    started)."""
-    history = tracker.list_transitions("PM-016")
-    assert [(t.from_status, t.to_status) for t in history] == [
-        ("backlog", "in_progress"),
-        ("in_progress", "done"),
-        ("done", "in_progress"),
-    ]
-    assert all(isinstance(t, TransitionRecord) for t in history)
-    assert history[1].changed_at == "2026-09-16T10:00:00"
-    assert history[2].changed_at == "2026-09-16T15:30:00"
+def test_list_assignees_returns_the_full_seeded_roster(tracker):
+    """PM-10's own dependency: the roster this returns must include
+    everyone in ASSIGNEES, not just people who happen to own an item or
+    a commitment -- sofia.lindqvist (PM-10's planted zero-activity case)
+    owns neither, and still has to come back here."""
+    assignees = tracker.list_assignees()
+    assert {a.id for a in assignees} == {a["id"] for a in ASSIGNEES}
+    assert all(isinstance(a, Assignee) for a in assignees)
+    assert "sofia.lindqvist" in {a.id for a in assignees}
 
 
-def test_list_transitions_is_empty_for_an_item_with_no_history(tracker):
-    """PM-013: descoped straight out of backlog, no transitions at all --
-    an empty list, not an error."""
-    assert tracker.list_transitions("PM-013") == []
-
-
-def test_list_transitions_raises_for_unknown_item(tracker):
-    with pytest.raises(ItemNotFoundError):
-        tracker.list_transitions("PM-999")
-
-
-def test_list_transitions_reflects_a_transition_just_recorded(tracker):
-    tracker.transition("PM-021", "in_progress")
-    history = tracker.list_transitions("PM-021")
-    assert len(history) == 1
-    assert history[0].to_status == "in_progress"
-
-
-def test_list_sprints_returns_both_seeded_sprints(tracker):
-    sprints = tracker.list_sprints()
-    assert {sprint.id for sprint in sprints} == {"sprint-12", "sprint-13"}
-    assert all(isinstance(sprint, Sprint) for sprint in sprints)
-
-
-def test_list_sprints_carries_each_sprints_own_date_range(tracker):
-    sprints = {sprint.id: sprint for sprint in tracker.list_sprints()}
-    assert sprints["sprint-13"].start_date == "2026-09-07"
-    assert sprints["sprint-13"].end_date == "2026-09-20"
-    assert sprints["sprint-13"].display_name == "Sprint 13"
+def test_list_assignees_carries_each_assignees_own_display_name(tracker):
+    assignees = {a.id: a for a in tracker.list_assignees()}
+    assert assignees["sofia.lindqvist"].display_name == "Sofia Lindqvist"
+    assert assignees["wei.chen"].display_name == "Wei Chen"

@@ -1,5 +1,5 @@
 """
-Project-state snapshot (PM-05, extended by PM-08).
+Project-state snapshot (PM-05, extended by PM-08 and PM-10).
 
 Normalises tracker, code-host, channel, risk-log and commitments reads
 into one persisted, timestamped record, so a later run can diff against
@@ -8,9 +8,18 @@ facts from this one object alone ("the facts come from the snapshot" --
 that row's own words). Nothing here calls a model -- this is purely
 deterministic normalisation over already-typed adapter output (Tracker/
 CodeHost/TeamsReader/RiskLogStore/CommitmentsStore, PM-04/PM-08's own
-interfaces). Commits, channel messages, sprints, commitments and risks
-already come back from their adapters in a shape with nothing to
-normalise -- all five are held here unchanged, not re-modelled.
+interfaces). Commits, channel messages, sprints, commitments, risks and
+the roster already come back from their adapters in a shape with nothing
+to normalise -- all six are held here unchanged, not re-modelled.
+
+PM-10 adds `roster`, read via the tracker's own list_assignees() (no new
+adapter, no new required parameter -- the same tracker argument already
+passed in). It exists so PM-10's "not omitted" requirement can hold
+without breaking compute_morning_brief_facts's own purity: the full set
+of people to report on -- including anyone who owns no item, no
+commitment and no commit -- comes from this one snapshot object too, the
+same as everything else that function reads, rather than from a second,
+out-of-band import of the seed's own roster constant.
 
 The one real piece of normalisation is a tracker item's status:
 
@@ -42,7 +51,7 @@ from pydantic import BaseModel
 from pm.adapters.code_host import CodeHost, Commit
 from pm.adapters.commitments import Commitment, CommitmentsStore
 from pm.adapters.risk_log import Risk, RiskLogStore
-from pm.adapters.tracker import Sprint, Tracker, TrackerItem
+from pm.adapters.tracker import Assignee, Sprint, Tracker, TrackerItem
 from pm.seed.build import CANONICAL_STATUSES, CHANNEL_ID
 
 UNMAPPED = "UNMAPPED"
@@ -73,6 +82,7 @@ class ProjectSnapshot(BaseModel):
     sprints: list[Sprint] = []
     commitments: list[Commitment] = []
     risks: list[Risk] = []
+    roster: list[Assignee] = []
 
 
 def _now_iso() -> str:
@@ -130,6 +140,7 @@ def build_snapshot(
     sprints = tracker.list_sprints()
     commitments = commitments_store.list_commitments()
     risks = risk_log.list_risks()
+    roster = tracker.list_assignees()
     return ProjectSnapshot(
         taken_at=taken_at,
         items=items,
@@ -138,6 +149,7 @@ def build_snapshot(
         sprints=sprints,
         commitments=commitments,
         risks=risks,
+        roster=roster,
     )
 
 

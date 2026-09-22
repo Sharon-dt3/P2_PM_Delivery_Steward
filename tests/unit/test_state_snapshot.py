@@ -36,7 +36,9 @@ def test_normalize_item_marks_a_free_text_status_as_unmapped_but_keeps_it(seeded
 def test_build_snapshot_normalizes_all_five_sources(seeded_db_path):
     """PM-08 extended this from three sources to five (risk log,
     commitments) so its own morning-brief facts can come entirely from
-    one ProjectSnapshot."""
+    one ProjectSnapshot; PM-10 adds a sixth (roster), read via the same
+    tracker argument already passed in -- see snapshot.py's own
+    docstring on why that needed no new parameter here."""
     tracker = TrackerMock(db_path=seeded_db_path)
     code_host = CodeHostMock(db_path=seeded_db_path)
     teams_reader = get_teams_reader(db_path=seeded_db_path)
@@ -61,6 +63,8 @@ def test_build_snapshot_normalizes_all_five_sources(seeded_db_path):
     assert len(snapshot.sprints) == len(tracker.list_sprints())
     assert len(snapshot.commitments) == len(commitments_store.list_commitments())
     assert len(snapshot.risks) == len(risk_log.list_risks())
+    assert len(snapshot.roster) == len(tracker.list_assignees())
+    assert "sofia.lindqvist" in {assignee.id for assignee in snapshot.roster}
 
     unmapped = [item for item in snapshot.items if item.status == UNMAPPED]
     assert len(unmapped) == 1

@@ -18,13 +18,22 @@ Two things this data deliberately reuses rather than invents, per the
 master plan's own note that channel messages are "reused from P1's
 fixture, not re-seeded":
 
-1. The six people below (noah.becker, aisha.rahman, wei.chen,
+1. Six of the seven people below (noah.becker, aisha.rahman, wei.chen,
    olivia.dupont, mateo.silva, olivia.dupree) are P1's own "Project
    Gamma" (19:proj-gamma@thread.tacv2) channel roster, verbatim from
    ../P3_Agents/seed/fixtures/members.json. olivia.dupont/olivia.dupree
    are P1's own already-existing near-duplicate name pair there -- this
    is PM-03's "two similar assignee names" difficulty with zero
-   invention needed on this repo's part.
+   invention needed on this repo's part. The seventh, sofia.lindqvist,
+   is this repo's own addition (PM-10's planted difficulty, not reused
+   from P1 -- there is no unused seventh proj-gamma member to borrow,
+   and this repo's own assignees table was never required to be a
+   subset of any one Teams channel's roster in the first place): on the
+   tracker's own roster, and deliberately given no item, no commitment
+   and no commit anywhere below -- the one genuinely silent teammate
+   PM-10's own acceptance test needs to exist in the real seed, not
+   just in a hand-built unit-test fixture. test_seed_data.py's own
+   `5 <= len(ASSIGNEES) <= 7` bound already allowed for this.
 2. A handful of items carry a source_message_id pointing at a real
    message in ../P3_Agents/seed/fixtures/messages.json for that same
    channel (e.g. PM-014 cites proj-gamma-0192, "the search index is
@@ -65,8 +74,9 @@ SPRINTS = [
     {"id": "sprint-13", "display_name": "Sprint 13", "start_date": "2026-09-07", "end_date": "2026-09-20"},
 ]
 
-# Verbatim from ../P3_Agents/seed/fixtures/members.json,
-# "19:proj-gamma@thread.tacv2" -- see this module's own docstring.
+# The first six are verbatim from ../P3_Agents/seed/fixtures/members.json,
+# "19:proj-gamma@thread.tacv2"; sofia.lindqvist is this repo's own addition
+# -- see this module's own docstring for both halves of that story.
 ASSIGNEES = [
     {"id": "noah.becker", "display_name": "Noah Becker"},
     {"id": "aisha.rahman", "display_name": "Aisha Rahman"},
@@ -74,6 +84,10 @@ ASSIGNEES = [
     {"id": "olivia.dupont", "display_name": "Olivia Dupont"},
     {"id": "mateo.silva", "display_name": "Mateo Silva"},
     {"id": "olivia.dupree", "display_name": "Olivia Dupree"},
+    # PM-10's planted zero-activity difficulty: on the roster, and
+    # deliberately absent from every other list in this module (ITEMS,
+    # COMMITS, COMMITMENTS) -- see this module's own docstring.
+    {"id": "sofia.lindqvist", "display_name": "Sofia Lindqvist"},
 ]
 
 # The tracker adapter's own notion of a "known" status. items.status is

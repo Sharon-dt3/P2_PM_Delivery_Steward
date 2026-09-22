@@ -1,4 +1,4 @@
-"""PM-08: facts computed from a snapshot.
+"""PM-08: facts computed from a snapshot. PM-10: honest absence.
 
 The row's own acceptance test, literal: "Regenerating on the same
 snapshot yields identical facts; wording may differ." The "wording may
@@ -11,6 +11,13 @@ ANCHOR_DATE is 2026-09-16 (see pm/seed/build.py's own docstring) --
 squarely inside sprint-13 (2026-09-07 .. 2026-09-20), which is what
 grounds every fact in this file against real, known seed values rather
 than invented ones.
+
+sofia.lindqvist (pm/seed/build.py's own comment on ASSIGNEES) is PM-10's
+planted zero-activity roster member -- on the roster, and deliberately
+absent from every item, commitment and commit in the real seed. The
+tests below against her prove this row's own acceptance test against
+real seed data, not just a hand-built fixture (that half is covered
+separately, in test_reporting_morning_brief.py).
 """
 
 from __future__ import annotations
@@ -21,7 +28,7 @@ from pm.adapters.risk_log import RiskLogMock
 from pm.adapters.teams import get_teams_reader
 from pm.adapters.tracker import TrackerMock
 from pm.reporting.facts import compute_morning_brief_facts
-from pm.seed.build import CHANNEL_ID
+from pm.seed.build import ASSIGNEES, CHANNEL_ID
 from pm.state.snapshot import build_snapshot
 
 ANCHOR_TAKEN_AT = "2026-09-16T23:59:59+00:00"
@@ -122,3 +129,36 @@ def test_blocker_facts_resolve_the_related_items_own_assignee(seeded_db_path):
     risk_002 = next(blocker for blocker in facts.blockers if blocker.risk_id == "RISK-002")
     assert risk_002.related_item_id == "PM-024"
     assert risk_002.assignee_id == "olivia.dupont"
+
+
+def test_every_roster_member_appears_even_with_zero_activity(seeded_db_path):
+    """PM-10's row, proven against the real seed: sofia.lindqvist owns
+    no item, no commitment and no commit anywhere in the fixture, and
+    still has to appear in facts.people -- "not omitted." Before PM-10,
+    _compute_person_facts derived its people entirely from items/
+    commitments actually observed, so a person in neither would never
+    have reached this list at all."""
+    snapshot = _snapshot(seeded_db_path)
+    facts = compute_morning_brief_facts(snapshot)
+
+    assert {person.assignee_id for person in facts.people} == {a["id"] for a in ASSIGNEES}
+
+    sofia = next(person for person in facts.people if person.assignee_id == "sofia.lindqvist")
+    assert sofia.committed == []
+    assert sofia.delivered == []
+    assert sofia.pending == []
+    assert sofia.blocked == []
+    assert sofia.commit_count == 0
+    assert sofia.has_activity is False
+
+
+def test_a_person_with_only_a_commit_still_counts_as_having_activity(seeded_db_path):
+    """PM-10's own "tracker AND commit activity": wei.chen authored a
+    commit with no item_ref at all ("chore: bump CI runner image to
+    node 20"), which by itself must be enough to make has_activity
+    True regardless of what the four item/commitment buckets hold."""
+    snapshot = _snapshot(seeded_db_path)
+    facts = compute_morning_brief_facts(snapshot)
+    wei = next(person for person in facts.people if person.assignee_id == "wei.chen")
+    assert wei.commit_count > 0
+    assert wei.has_activity is True

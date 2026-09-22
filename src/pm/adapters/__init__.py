@@ -10,9 +10,10 @@ from pm.adapters.code_host import CodeHost, CodeHostMock
 from pm.adapters.commitments import Commitment, CommitmentNotFoundError, CommitmentsMock, CommitmentsStore
 from pm.adapters.risk_log import RiskLogMock, RiskLogStore
 from pm.adapters.teams import get_teams_publisher, get_teams_reader
-from pm.adapters.tracker import Sprint, Tracker, TrackerMock
+from pm.adapters.tracker import Assignee, Sprint, Tracker, TrackerMock
 
 __all__ = [
+    "Assignee",
     "CodeHost",
     "CodeHostMock",
     "Commitment",

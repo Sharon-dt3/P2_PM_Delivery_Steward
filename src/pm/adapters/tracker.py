@@ -94,6 +94,20 @@ class Sprint(BaseModel):
     end_date: str  # ISO date, inclusive
 
 
+class Assignee(BaseModel):
+    """Roster metadata (PM-10's own dependency: reporting absence
+    honestly needs to know who is ON the team in the first place, not
+    just who happens to already own an item or a commitment -- a
+    zero-activity person has neither, so nothing derived from items or
+    commitments alone would ever surface them). Lives on this same
+    interface, over the same seeded assignees table items/commits/
+    commitments already reference, for the same reason Sprint does: a
+    real tracker product exposes its own roster alongside items too."""
+
+    id: str
+    display_name: str
+
+
 class ItemFilter(BaseModel):
     """Every set field is AND-ed together; an unset (None/False) field
     matches everything. status/assignee_id/sprint_id are plain string
@@ -163,6 +177,14 @@ class Tracker(ABC):
         themselves from each sprint's own start_date/end_date against
         whatever moment they care about."""
 
+    @abstractmethod
+    def list_assignees(self) -> list[Assignee]:
+        """Every person on the roster, in id order -- including anyone
+        who owns no item, no commitment, and no commit at all (PM-10's
+        own "not omitted" requirement: a caller that only ever looked at
+        items/commitments would never learn a genuinely silent person
+        exists to report on)."""
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -197,6 +219,10 @@ def _row_to_sprint(row: sqlite3.Row) -> Sprint:
         start_date=row["start_date"],
         end_date=row["end_date"],
     )
+
+
+def _row_to_assignee(row: sqlite3.Row) -> Assignee:
+    return Assignee(id=row["id"], display_name=row["display_name"])
 
 
 class TrackerMock(Tracker):
@@ -323,3 +349,8 @@ class TrackerMock(Tracker):
         with self._conn() as conn:
             rows = conn.execute("SELECT * FROM sprints ORDER BY id").fetchall()
         return [_row_to_sprint(row) for row in rows]
+
+    def list_assignees(self) -> list[Assignee]:
+        with self._conn() as conn:
+            rows = conn.execute("SELECT * FROM assignees ORDER BY id").fetchall()
+        return [_row_to_assignee(row) for row in rows]

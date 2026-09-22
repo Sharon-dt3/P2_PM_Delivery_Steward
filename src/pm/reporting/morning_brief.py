@@ -1,5 +1,6 @@
 """
-Morning brief expression (PM-08) and grounding (PM-09).
+Morning brief expression (PM-08), grounding (PM-09), and honest absence
+(PM-10).
 
 Facts in code (pm.reporting.facts, zero import of spine.llm/spine.prompts
 anywhere in it), prose from the model here -- the same split proven in
@@ -41,6 +42,28 @@ real fact-rendering in this module would ever produce) is excluded from
 the final brief's content, appears in the returned `dropped` mapping,
 and is logged via the kernel's own `spine.grounding.kernel` logger
 (captured with caplog).
+
+PM-10 ("A person with no activity is reported as having no activity --
+not omitted, not embellished") is rendered here, in _render_brief, and
+ONLY here -- no model call, no new prompt, no new section. This mirrors
+P1's own participation ledger discipline exactly (see
+../P3_Agents/src/p1/reporting/participation_rendering.py's own
+docstring): an absence is not a fact that needs phrasing, so there is
+nothing to hand the model. person.has_activity (pm.reporting.facts) is
+the one, already-computed signal this checks; when it's False, the four
+normal Committed/Delivered/Pending/Blocked lines (which would otherwise
+each read "none.", an accurate but noisy way to say the same thing four
+times) are replaced by exactly one fixed-wording line,
+_NO_ACTIVITY_LINE -- a literal constant, never interpolated, so an
+absence can never be embellished with an inferred reason the way P1's
+own PARTICIPATION_WORDING never is either. Row-level acceptance test,
+literal: "The zero-activity assignee appears with an explicit no-update
+line." Proven in tests/unit/test_reporting_morning_brief.py against a
+person with every bucket and commit_count empty, and in
+tests/unit/test_reporting_facts.py and test_state_snapshot.py against
+this repo's own real seeded roster, which PM-10 gives a seventh,
+deliberately silent member for exactly this purpose (see
+pm/seed/build.py's own comment on ASSIGNEES).
 """
 
 from __future__ import annotations
@@ -66,6 +89,11 @@ _SECTION_LABELS = {
     "blocked": "what each person is blocked on",
     "blockers": "blockers, ranked by impact",
 }
+
+# PM-10's own fixed wording for a genuinely zero-activity person -- see
+# this module's own docstring for why it is a literal constant, never
+# built up from parts, exactly like P1's own PARTICIPATION_WORDING.
+_NO_ACTIVITY_LINE = "No update: no tracker activity or commits recorded."
 
 ReferenceLookup = Callable[[str], str | None]
 
@@ -274,6 +302,14 @@ def _render_brief(facts: MorningBriefFacts, sections: dict[str, list[FactualLine
 
     for person in facts.people:
         parts.append(f"## {person.assignee_id}")
+
+        if not person.has_activity:
+            # PM-10: a genuinely zero-activity person gets exactly one
+            # explicit line, not four repeated "none."s -- see this
+            # module's own docstring.
+            parts.append(f"- {_NO_ACTIVITY_LINE}")
+            parts.append("")
+            continue
 
         committed_refs = {
             _reference("item", c.item_id) if c.item_id else _reference("commitment", str(c.id))
