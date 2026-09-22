@@ -64,6 +64,28 @@ def test_seed_lands_in_the_database_unchanged(seeded_conn):
     assert assignee_count == len(ASSIGNEES)
 
 
+def test_every_seeded_store_actually_lands_in_the_database(seeded_conn):
+    """PM-02's own acceptance test, literally: "All stores seeded and
+    committed." Every table build_seed() writes to must actually hold
+    the rows the Python-side lists claim, not just have the right count
+    in COMMITS/COMMITMENTS/RISKS themselves -- this is the one test
+    that checks all of them against the real, migrated schema in one
+    place, including the two (commits, commitments) no adapter-level
+    test already covers end to end."""
+    table_and_expected = {
+        "sprints": len(SPRINTS),
+        "assignees": len(ASSIGNEES),
+        "items": len(ITEMS),
+        "item_transitions": len(ITEM_TRANSITIONS),
+        "commits": len(COMMITS),
+        "commitments": len(COMMITMENTS),
+        "risks": len(RISKS),
+    }
+    for table, expected in table_and_expected.items():
+        (actual,) = seeded_conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
+        assert actual == expected, f"{table}: expected {expected} seeded rows, found {actual}"
+
+
 def test_build_seed_is_idempotent(seeded_conn):
     """PM-01/02's own DoD line: "seed committed and reproducible."
     Calling build_seed() again on an already-seeded connection must
