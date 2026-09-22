@@ -11,7 +11,8 @@ for P2:
   missing its scope/consent flag"). Channel messages are **reused from
   P1's own fixture** (`../P3_Agents/seed/fixtures`), not re-seeded here.
 - **PM-03** -- ten deliberately planted difficulties in that seed data
-  (see `src/pm/seed/` once PM-01/02/03 land for the exact list).
+  (see `src/pm/seed/DIFFICULTIES.md` for the exact list and which entity
+  each one lives on).
 - **PM-04** -- three new adapters (tracker, code host, risk-log store),
   each a narrow interface with a mock over the seeded fixture, plus
   confirmation that P1's Teams reader and publisher satisfy this agent's
@@ -38,13 +39,15 @@ D11 is fully built:
   a smoke test confirming the cross-repo path dependencies on `p1` and
   `spine` actually import.
 - **Seed data** (`src/pm/seed/build.py`): 30 tracker items across 2
-  sprints, 6 assignees, 12 commits, a 3-entry risk log, 4 delivery
-  commitments, and 2 P1 `OutcomeRecord`s (one `allowlisted=False`),
-  plus the ten planted difficulties from PM-03, each a real, queryable
-  property of the data (see `tests/unit/test_seed_difficulties.py`,
-  which re-derives all ten from the rows rather than trusting a
-  comment). Run `uv run python scripts/seed.py` to build `data/pm.db`
-  and the outcome-record fixtures from scratch.
+  sprints, 6 assignees, 43 commits, a 3-entry risk log, 8 delivery
+  commitments (some overdue), and 2 P1 `OutcomeRecord`s (one
+  `allowlisted=False`), plus the ten planted difficulties from PM-03,
+  each a real, queryable property of the data -- named with the entity
+  each lives on in `src/pm/seed/DIFFICULTIES.md`, and independently
+  re-derived from the rows (not trusted from a comment) by
+  `tests/unit/test_seed_difficulties.py`. Run `uv run python
+  scripts/seed.py` to build `data/pm.db` and the outcome-record
+  fixtures from scratch.
 - **Adapters** (`src/pm/adapters/`): `TrackerMock`, `CodeHostMock` and
   `RiskLogMock` -- narrow interfaces (`Tracker`/`CodeHost`/
   `RiskLogStore`), each with a mock over the seeded fixture -- plus
