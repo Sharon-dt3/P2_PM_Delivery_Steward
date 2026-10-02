@@ -1,0 +1,28 @@
+{
+  "allowlisted": false,
+  "blockers": [],
+  "channel_display_name": "Project Gamma",
+  "channel_id": "19:proj-gamma@thread.tacv2",
+  "date": "2026-09-17",
+  "decisions": [],
+  "generated_at": "2026-09-17T22:05:00+00:00",
+  "participation": [
+    {
+      "evidence_message_ids": [],
+      "member_id": "mateo.silva",
+      "state": "posted_no_update"
+    }
+  ],
+  "questions": [],
+  "roster": [
+    "noah.becker",
+    "aisha.rahman",
+    "wei.chen",
+    "olivia.dupont",
+    "mateo.silva",
+    "olivia.dupree",
+    "sofia.lindqvist"
+  ],
+  "schema_version": "1.0",
+  "updates": []
+}

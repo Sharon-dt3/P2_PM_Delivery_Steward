@@ -1,0 +1,51 @@
+{
+  "allowlisted": true,
+  "blockers": [
+    {
+      "message_id": "proj-gamma-0192",
+      "quote": "the search index is blocked, the staging DB migration hasn't run yet.",
+      "text": "Search index work is blocked: the staging DB migration hasn't run yet."
+    }
+  ],
+  "channel_display_name": "Project Gamma",
+  "channel_id": "19:proj-gamma@thread.tacv2",
+  "date": "2026-09-16",
+  "decisions": [],
+  "generated_at": "2026-09-16T22:05:00+00:00",
+  "participation": [
+    {
+      "evidence_message_ids": [],
+      "member_id": "aisha.rahman",
+      "state": "no_message"
+    }
+  ],
+  "questions": [
+    {
+      "message_id": "proj-gamma-0197",
+      "quote": "Should the export job handle the null case, or is that out of scope?",
+      "text": "Open question on whether the export job should handle the null case."
+    }
+  ],
+  "roster": [
+    "noah.becker",
+    "aisha.rahman",
+    "wei.chen",
+    "olivia.dupont",
+    "mateo.silva",
+    "olivia.dupree",
+    "sofia.lindqvist"
+  ],
+  "schema_version": "1.0",
+  "updates": [
+    {
+      "message_id": "proj-gamma-0180",
+      "quote": "Pushed the fix for the billing sync, should resolve the flaky test.",
+      "text": "Pushed the fix for the billing sync, should resolve the flaky test."
+    },
+    {
+      "message_id": "proj-gamma-0193",
+      "quote": "Deployed the onboarding wizard to staging, looks stable so far.",
+      "text": "Deployed the onboarding wizard to staging, looks stable so far."
+    }
+  ]
+}
