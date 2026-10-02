@@ -241,14 +241,21 @@ def _generate_section_lines(
     prompt,
     section_key: str,
     items: list[_FactLine],
-    reference_lookup: ReferenceLookup,
 ) -> GroundingResult:
     """Returns a GroundingResult for one section. Calls the model at most
     once per retry attempt, and never at all when items is empty -- an
     empty section is an honest fact (nothing pending, say), not a prompt
-    to fill in."""
+    to fill in.
+
+    A line is grounded against THIS section's own facts only, never the
+    whole brief's: a real item cited under the wrong section (a pending
+    item claimed as "delivered") is as unsupported as an invented one, and
+    a brief-wide lookup would let it through (found by PM-12's GC2 probe,
+    the same cross-section leak P1's per-section message_lookup closes)."""
     if not items:
         return GroundingResult()
+
+    section_lookup: ReferenceLookup = {item.reference_id: item.detail for item in items}.get
 
     facts_block = _render_facts_block(items)
 
@@ -266,7 +273,7 @@ def _generate_section_lines(
             FactualLine(text=line.text, message_id=line.reference_id, quote=None) for line in draft.lines
         ]
 
-    return ground_with_retry(generate_fn, reference_lookup)
+    return ground_with_retry(generate_fn, section_lookup)
 
 
 def _order_key(section_key: str, facts: MorningBriefFacts) -> Callable[[FactualLine], int]:
@@ -293,12 +300,14 @@ def _render_brief(facts: MorningBriefFacts, sections: dict[str, list[FactualLine
     parts.append(scope_lines[0].text if scope_lines else "Sprint scope: no sprint on file covers this date.")
     parts.append("")
 
-    text_by_item_ref: dict[str, str] = {
-        line.message_id: line.text
-        for key in ("committed", "delivered", "pending", "blocked")
-        for line in sections[key]
-        if line.message_id
-    }
+    # Keyed by (section, ref), never ref alone: one item can be both a
+    # commitment and a delivered/pending/blocked item, and the two
+    # sections' lines share that item's reference_id.
+    texts_by_section_ref: dict[tuple[str, str], list[str]] = {}
+    for key in ("committed", "delivered", "pending", "blocked"):
+        for line in sections[key]:
+            if line.message_id:
+                texts_by_section_ref.setdefault((key, line.message_id), []).append(line.text)
 
     for person in facts.people:
         parts.append(f"## {person.assignee_id}")
@@ -311,21 +320,23 @@ def _render_brief(facts: MorningBriefFacts, sections: dict[str, list[FactualLine
             parts.append("")
             continue
 
-        committed_refs = {
+        # Ordered lists (deduplicated), not sets: set iteration order would
+        # make the rendered text differ run to run for identical facts.
+        committed_refs = dict.fromkeys(
             _reference("item", c.item_id) if c.item_id else _reference("commitment", str(c.id))
             for c in person.committed
-        }
-        delivered_refs = {_reference("item", i.item_id) for i in person.delivered}
-        pending_refs = {_reference("item", i.item_id) for i in person.pending}
-        blocked_refs = {_reference("item", i.item_id) for i in person.blocked}
+        )
+        delivered_refs = dict.fromkeys(_reference("item", i.item_id) for i in person.delivered)
+        pending_refs = dict.fromkeys(_reference("item", i.item_id) for i in person.pending)
+        blocked_refs = dict.fromkeys(_reference("item", i.item_id) for i in person.blocked)
 
-        for label, refs in (
-            ("Committed", committed_refs),
-            ("Delivered", delivered_refs),
-            ("Pending", pending_refs),
-            ("Blocked", blocked_refs),
+        for label, section_key, refs in (
+            ("Committed", "committed", committed_refs),
+            ("Delivered", "delivered", delivered_refs),
+            ("Pending", "pending", pending_refs),
+            ("Blocked", "blocked", blocked_refs),
         ):
-            lines = [text_by_item_ref[ref] for ref in refs if ref in text_by_item_ref]
+            lines = [text for ref in refs for text in texts_by_section_ref.get((section_key, ref), [])]
             if lines:
                 parts.append(f"- {label}: " + " ".join(lines))
             else:
@@ -359,14 +370,13 @@ def generate_morning_brief(
     half of the split)."""
     registry = prompt_registry or PromptRegistry()
     prompt = registry.get(MORNING_BRIEF_CAPABILITY)
-    reference_lookup = _build_reference_lookup(facts)
     section_facts = _section_facts(facts)
 
     sections: dict[str, list[FactualLine]] = {}
     dropped: dict[str, list[dict]] = {}
     for section_key in SECTION_ORDER:
         result = _generate_section_lines(
-            gateway, prompt, section_key, section_facts[section_key], reference_lookup
+            gateway, prompt, section_key, section_facts[section_key]
         )
         sections[section_key] = result.grounded_lines
         dropped[section_key] = _failures_as_dicts(result.failures)

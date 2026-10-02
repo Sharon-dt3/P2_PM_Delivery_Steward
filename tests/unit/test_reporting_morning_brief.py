@@ -325,3 +325,101 @@ def test_the_zero_activity_assignee_appears_with_an_explicit_no_update_line():
     wei_block = _person_block(brief.content, "wei.chen")
     assert "Wei Chen delivered PM-002." in wei_block
     assert "No update" not in wei_block
+
+
+def _two_bucket_facts() -> MorningBriefFacts:
+    """One person with a delivered item (PM-001) and a pending item
+    (PM-002) and nothing else, so only the delivered and pending
+    sections ever call the model, in that order."""
+    return MorningBriefFacts(
+        as_of="2026-09-16T23:59:59+00:00",
+        sprint=None,
+        people=[
+            PersonFacts(
+                assignee_id="aisha.rahman",
+                committed=[],
+                delivered=[ItemFact(item_id="PM-001", title="Ship login page")],
+                pending=[ItemFact(item_id="PM-002", title="Write migration")],
+                blocked=[],
+            )
+        ],
+        blockers=[],
+    )
+
+
+def test_a_real_item_cited_under_the_wrong_section_is_dropped_and_retried():
+    """PM-12 / GC2 found this: grounding used one brief-wide lookup, so a
+    pending item cited inside the "delivered" section resolved fine and a
+    claim of delivery for work that is only pending reached the brief."""
+    gateway = FakeGateway(
+        [
+            _lines_response(("Aisha shipped the migration.", "item:PM-002")),  # delivered: wrong section's item
+            _lines_response(("Aisha delivered the login page.", "item:PM-001")),  # delivered, corrected on retry
+            _lines_response(("Aisha still has the migration pending.", "item:PM-002")),
+        ]
+    )
+
+    brief = generate_morning_brief(_two_bucket_facts(), gateway)
+
+    assert gateway.calls == 3
+    assert [line.message_id for line in brief.sections["delivered"]] == ["item:PM-001"]
+    assert "shipped the migration" not in brief.content
+    assert "- Delivered: Aisha delivered the login page." in brief.content
+    assert "- Pending: Aisha still has the migration pending." in brief.content
+
+
+def test_an_item_that_is_both_committed_and_delivered_keeps_each_buckets_own_text():
+    """Rendering used to key lines by reference_id alone, so an item that
+    is both a commitment and a delivered item (same item:PM-001
+    reference in two sections) had one bucket's text silently overwritten
+    by the other's."""
+    facts = MorningBriefFacts(
+        as_of="2026-09-16T23:59:59+00:00",
+        sprint=None,
+        people=[
+            PersonFacts(
+                assignee_id="aisha.rahman",
+                committed=[
+                    Commitment(
+                        id=7, member_id="aisha.rahman", item_id="PM-001",
+                        text="Ship login page by Friday", due_date_iso="2026-09-18", made_at="2026-09-14",
+                    )
+                ],
+                delivered=[ItemFact(item_id="PM-001", title="Ship login page")],
+                pending=[],
+                blocked=[],
+            )
+        ],
+        blockers=[],
+    )
+    gateway = FakeGateway(
+        [
+            _lines_response(("Aisha committed to shipping the login page.", "item:PM-001")),  # committed
+            _lines_response(("Aisha delivered the login page.", "item:PM-001")),  # delivered
+        ]
+    )
+
+    brief = generate_morning_brief(facts, gateway)
+
+    assert "- Committed: Aisha committed to shipping the login page." in brief.content
+    assert "- Delivered: Aisha delivered the login page." in brief.content
+
+
+def test_rendered_content_is_identical_for_identical_facts_and_lines():
+    """Bucket text used to be assembled by iterating a set, so the same
+    facts and the same model lines could render in a different order from
+    one process to the next."""
+    facts = _two_bucket_facts()
+    facts.people[0].delivered.append(ItemFact(item_id="PM-003", title="Fix typo"))
+
+    def render() -> str:
+        gateway = FakeGateway(
+            [
+                _lines_response(("Aisha delivered the login page.", "item:PM-001"), ("Aisha fixed the typo.", "item:PM-003")),
+                _lines_response(("Aisha still has the migration pending.", "item:PM-002")),
+            ]
+        )
+        return generate_morning_brief(facts, gateway).content
+
+    assert render() == render()
+    assert "- Delivered: Aisha delivered the login page. Aisha fixed the typo." in render()
