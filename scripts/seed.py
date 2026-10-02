@@ -27,7 +27,7 @@ from pathlib import Path
 # applies to every one of its own non-pytest entry points.
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _P1_REPO_ROOT = _REPO_ROOT.parent / "P3_Agents"
-for _path in (_REPO_ROOT / "src", _P1_REPO_ROOT / "src", _P1_REPO_ROOT / "packages" / "spine" / "src"):
+for _path in (_REPO_ROOT / "src", _P1_REPO_ROOT / "src", _REPO_ROOT / "packages" / "spine" / "src"):
     sys.path.insert(0, str(_path))
 
 from pm.seed.build import build_outcome_fixtures, build_seed  # noqa: E402

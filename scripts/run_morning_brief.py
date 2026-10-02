@@ -25,7 +25,7 @@ from pathlib import Path
 # takes effect inside pytest's own import machinery.
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _P1_REPO_ROOT = _REPO_ROOT.parent / "P3_Agents"
-for _path in (_REPO_ROOT / "src", _P1_REPO_ROOT / "src", _P1_REPO_ROOT / "packages" / "spine" / "src"):
+for _path in (_REPO_ROOT / "src", _P1_REPO_ROOT / "src", _REPO_ROOT / "packages" / "spine" / "src"):
     sys.path.insert(0, str(_path))
 
 from pm.reporting.facts import compute_morning_brief_facts  # noqa: E402

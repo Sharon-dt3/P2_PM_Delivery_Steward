@@ -38,37 +38,35 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-# Mirrors the fix P1 itself needed on 2026-09-21 (see
-# ../P3_Agents/pyproject.toml and its DECISION_LOG.md entry): uv's
-# spine.pth / p1.pth site-packages redirects for path dependencies are
-# unreliable outside a handful of execution contexts, but pytest's own
-# pythonpath option adds these paths itself, independent of site.py's
-# .pth processing. Both sibling repos' src/ trees -- and spine's, since
-# it is a nested path dependency of p1's own workspace, not a top-level
-# dependency of this project -- are listed here directly from day one,
-# rather than waiting to rediscover the exact same ModuleNotFoundError
-# P1 hit mid-project.
+# uv's .pth site-packages redirects for local packages are unreliable
+# outside a handful of execution contexts, but pytest's own pythonpath
+# option adds these paths itself, independent of site.py's .pth
+# processing. spine is this repo's OWN copy (packages/spine, see its
+# PROVENANCE.md) and comes first; ../P3_Agents/src is P1's code, read for
+# its adapters/config/contracts and never modified from here. P1's own copy
+# of spine (../P3_Agents/packages/spine) is deliberately NOT on this list.
 pythonpath = [
     "src",
+    "packages/spine/src",
     "../P3_Agents/src",
-    "../P3_Agents/packages/spine/src",
 ]
 
+[tool.uv]
+# p1's own pyproject pins spine to ITS copy (../P3_Agents/packages/spine) via
+# p1's workspace sources, which would otherwise conflict with this repo's
+# copy. Overriding the requirement forces every package in this environment,
+# p1 included, onto the one spine this repo owns.
+override-dependencies = ["spine"]
+
+[tool.uv.workspace]
+# spine is owned by this repo: a copy taken from P1 at a pinned commit, so
+# changes P2 needs in spine never edit P1's repo (and P1's later changes
+# never silently change P2). See packages/spine/PROVENANCE.md.
+members = ["packages/spine"]
+
 [tool.uv.sources]
-# Both are ordinary path dependencies onto the sibling P3_Agents repo,
-# not a shared uv workspace: this repo is deliberately its own separate
-# repo (per the user's explicit choice of "new sibling folder"), so it
-# cannot join P1's [tool.uv.workspace] the way packages/spine does from
-# inside P3_Agents itself. uv resolves each path project's own
-# pyproject.toml (and therefore its own dependencies -- anthropic,
-# apscheduler, fastapi, etc. for p1) independently of this project's
-# lockfile.
+spine = { workspace = true }
+# P1 stays a plain, read-only path dependency on the sibling repo -- used
+# for its Teams adapters, scope gate, config loader and outcome-record
+# contract. Nothing in this repo edits it.
 p1 = { path = "../P3_Agents" }
-# editable = true: p1's own pyproject.toml pulls spine in as a
-# [tool.uv.workspace] member (spine = { workspace = true }), and uv
-# resolves workspace members editable. Without editable = true here too,
-# uv sees two different requirement specs for the same package -- one
-# editable (via p1's workspace), one not (this repo's own plain path
-# dependency) -- and refuses to resolve at all ("conflicting URLs for
-# package `spine`"), confirmed by uv sync on 2026-09-21.
-spine = { path = "../P3_Agents/packages/spine", editable = true }

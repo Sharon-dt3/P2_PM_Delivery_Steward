@@ -19,6 +19,34 @@ def test_spine_package_imports() -> None:
     import spine  # noqa: F401
 
 
+def test_spine_is_this_repos_own_copy_never_p1s() -> None:
+    """P2 owns its spine (packages/spine, see its PROVENANCE.md) so that a
+    change P2 needs in spine can never edit P1's repo. If a path or install
+    quietly pointed spine back at ../P3_Agents/packages/spine, this fails
+    before anyone edits the wrong copy."""
+    import sys
+    from pathlib import Path
+
+    import spine
+
+    repo_root = Path(__file__).resolve().parents[2]
+    p1_spine_src = (repo_root.parent / "P3_Agents" / "packages" / "spine" / "src").resolve()
+
+    spine_file = Path(spine.__file__).resolve()
+    assert spine_file.is_relative_to(repo_root / "packages" / "spine" / "src")
+    assert not spine_file.is_relative_to(p1_spine_src)
+    assert all(Path(entry).resolve() != p1_spine_src for entry in sys.path if entry)
+
+
+def test_p1_code_that_uses_spine_gets_this_repos_spine() -> None:
+    """One spine per process: P1's own shims re-export spine, so they must
+    hand back the same objects P2 imports directly, not a second copy."""
+    import p1.llm.gateway as p1_gateway
+    import spine.llm.gateway as spine_gateway
+
+    assert p1_gateway.LLMGateway is spine_gateway.LLMGateway
+
+
 def test_p1_adapters_factory_is_reachable() -> None:
     """The exact functions PM-04 will wire up: get_teams_reader() and
     get_teams_publisher(). Importing them here -- not calling them, since

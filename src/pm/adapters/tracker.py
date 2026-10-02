@@ -8,7 +8,7 @@ Agent logic depends ONLY on this interface -- no SQL, no specific
 tracker product's shape, may leak past it. Mirrors the ABC-interface /
 pydantic-model-for-data / mock-and-real-implementations-behind-it
 convention P1 itself uses (see e.g.
-../P3_Agents/packages/spine/src/spine/adapters/teams_reader.py).
+packages/spine/src/spine/adapters/teams_reader.py).
 
 TrackerMock is the only implementation so far, over this repo's own
 seeded fixture (PM-01/02, src/pm/seed/build.py). A real tracker's HTTP

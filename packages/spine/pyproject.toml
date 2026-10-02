@@ -1,0 +1,27 @@
+[project]
+name = "spine"
+version = "0.1.0"
+description = "Shared internal spine extracted at Gate G1 (CHN-33): LLM gateway, structured-output/retry, SQLite schema/migration engine, proposal record, write guard, grounding kernel, prompt registry, eval harness, scheduler, and the committed-config-plus-live-override config store pattern. Reused, not copy-pasted, by every agent built after P1."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "anthropic[bedrock]>=1.5.0",
+    "apscheduler>=3.11.3",
+    "httpx>=0.28.1",
+    "pydantic>=2.13.5",
+    "python-dotenv>=1.2.3",
+    "pyyaml>=6.0.3",
+    "tenacity>=9.1.4",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.3,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
