@@ -113,3 +113,98 @@ def test_two_consecutive_snapshots_persist_and_are_independently_readable(seeded
     second_pm028 = next(item for item in read_back_second.items if item.id == "PM-028")
     assert first_pm028.status == "in_progress"
     assert second_pm028.status == "blocked"
+
+
+FIRST_AT = "2026-09-18T10:00:00+00:00"
+SECOND_AT = "2026-09-18T10:05:00+00:00"
+
+
+def _two_consecutive_snapshots(db_path):
+    """Two real snapshots five minutes apart, with a genuine tracker change
+    between them, built and returned but not yet saved."""
+    tracker = TrackerMock(db_path=db_path)
+    adapters = {
+        "risk_log": RiskLogMock(db_path=db_path),
+        "commitments_store": CommitmentsMock(db_path=db_path),
+    }
+    code_host = CodeHostMock(db_path=db_path)
+    reader = get_teams_reader(db_path=db_path)
+
+    first = build_snapshot(tracker, code_host, reader, CHANNEL_ID, taken_at=FIRST_AT, **adapters)
+    tracker.transition("PM-028", "blocked")
+    second = build_snapshot(tracker, code_host, reader, CHANNEL_ID, taken_at=SECOND_AT, **adapters)
+    return first, second
+
+
+def test_each_snapshot_reads_back_complete_not_just_its_timestamp(seeded_db_path):
+    """The acceptance test above checks the timestamp and one item. This
+    requires the WHOLE snapshot (items, commits, channel messages, sprints,
+    commitments, risks, roster) to survive the round trip intact, for both."""
+    first, second = _two_consecutive_snapshots(seeded_db_path)
+    save_snapshot(first, db_path=seeded_db_path)
+    save_snapshot(second, db_path=seeded_db_path)
+
+    assert read_snapshot(FIRST_AT, db_path=seeded_db_path) == first
+    assert read_snapshot(SECOND_AT, db_path=seeded_db_path) == second
+    assert first != second
+
+
+def test_a_snapshot_stands_alone_and_is_not_stored_relative_to_the_other(seeded_db_path):
+    """Independently readable means neither row needs the other. Remove the
+    first snapshot entirely: the second must still read back complete, and
+    removing the second must leave the first untouched."""
+    import sqlite3
+
+    first, second = _two_consecutive_snapshots(seeded_db_path)
+    save_snapshot(first, db_path=seeded_db_path)
+    save_snapshot(second, db_path=seeded_db_path)
+
+    with sqlite3.connect(seeded_db_path) as conn:
+        conn.execute("DELETE FROM snapshots WHERE taken_at = ?", (FIRST_AT,))
+    assert list_snapshot_timestamps(db_path=seeded_db_path) == [SECOND_AT]
+    assert read_snapshot(SECOND_AT, db_path=seeded_db_path) == second
+
+    save_snapshot(first, db_path=seeded_db_path)
+    with sqlite3.connect(seeded_db_path) as conn:
+        conn.execute("DELETE FROM snapshots WHERE taken_at = ?", (SECOND_AT,))
+    assert read_snapshot(FIRST_AT, db_path=seeded_db_path) == first
+
+
+def test_snapshots_persist_across_separate_processes(seeded_db_path):
+    """Persisted means on disk, not held in this process's memory: one
+    process writes both snapshots and exits, a different process reads
+    them back, and what it reads equals what was written."""
+    import os
+    import subprocess
+    import sys
+
+    first, second = _two_consecutive_snapshots(seeded_db_path)
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join(p for p in sys.path if p)}
+
+    writer = (
+        "import sys, json\n"
+        "from pm.state.snapshot import ProjectSnapshot\n"
+        "from pm.state.store import save_snapshot\n"
+        "for payload in json.load(sys.stdin):\n"
+        "    save_snapshot(ProjectSnapshot.model_validate_json(payload), db_path=sys.argv[1])\n"
+    )
+    reader = (
+        "import sys, json\n"
+        "from pm.state.store import read_snapshot\n"
+        "print(json.dumps([read_snapshot(at, db_path=sys.argv[1]).model_dump_json() for at in sys.argv[2:]]))\n"
+    )
+    import json
+
+    subprocess.run(
+        [sys.executable, "-c", writer, str(seeded_db_path)],
+        input=json.dumps([first.model_dump_json(), second.model_dump_json()]),
+        text=True, env=env, check=True,
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", reader, str(seeded_db_path), FIRST_AT, SECOND_AT],
+        capture_output=True, text=True, env=env, check=True,
+    ).stdout
+    read_first, read_second = (ProjectSnapshot.model_validate_json(p) for p in json.loads(out))
+
+    assert read_first == first
+    assert read_second == second
