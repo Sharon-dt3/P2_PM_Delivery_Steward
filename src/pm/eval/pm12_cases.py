@@ -140,7 +140,7 @@ class ScriptedGateway:
         self.calls += 1
         key = _prompt_section(prompt)
         self._attempts[key] = self._attempts.get(key, 0) + 1
-        lines = [{"text": detail, "reference_id": ref} for ref, detail in _prompt_facts(prompt)]
+        lines = [{"text": detail, "reference_id": ref, "quote": detail} for ref, detail in _prompt_facts(prompt)]
         if self._attempts[key] == 1 and key in self._tamper:
             lines = self._tamper[key](lines)
         return _response(lines)

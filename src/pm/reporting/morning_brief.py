@@ -68,14 +68,20 @@ pm/seed/build.py's own comment on ASSIGNEES).
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 
 from pydantic import BaseModel
-
-from pm.reporting.facts import MorningBriefFacts
-from spine.grounding.kernel import FactualLine, GroundingFailure, GroundingResult, ground_with_retry
+from spine.grounding.kernel import (
+    FactualLine,
+    GroundingFailure,
+    GroundingResult,
+    ground_with_retry,
+)
 from spine.llm.structured import generate_structured
 from spine.prompts.registry import PromptRegistry
+
+from pm.reporting.facts import MorningBriefFacts
 
 MORNING_BRIEF_CAPABILITY = "pm08_morning_brief"
 
@@ -97,15 +103,59 @@ _NO_ACTIVITY_LINE = "No update: no tracker activity or commits recorded."
 
 ReferenceLookup = Callable[[str], str | None]
 
+MIN_QUOTE_CHARS = 8
+_ID_RE = re.compile(r"\b[A-Za-z]+-\d+\b")  # PM-009, RISK-001, sprint-13
+_NUMBER_RE = re.compile(r"\d+(?:\.\d+)?")
+
+
+def _specifics(text: str) -> tuple[dict[str, str], dict[float, str]]:
+    """The checkable specifics in a piece of text: ids (compared
+    case-insensitively) and numbers (compared by value, so the 7 in
+    "7 September" matches the 07 in "2026-09-07"). Each maps to the form it
+    was written in, for use in messages."""
+    ids = {m.lower(): m for m in _ID_RE.findall(text)}
+    numbers = {float(m): m for m in _NUMBER_RE.findall(_ID_RE.sub(" ", text))}
+    return ids, numbers
+
+
+def _check_line_content(line: FactualLine, source: str) -> str | None:
+    """Layer two of the wording checks (layer one is the kernel's own
+    verbatim-quote verification, which runs before this). Returns why a line
+    that cites a real fact still is not supported by it, or None.
+
+    - it must carry a quote of at least MIN_QUOTE_CHARS characters, so a
+      line is anchored to specific words of its source (the kernel then
+      verifies that quote is literally in the source);
+    - every item/risk id and every number in its text must also appear in
+      the source: the model may not introduce a name, count or date the fact
+      does not contain.
+
+    It cannot catch plain-word embellishment around a valid quote -- see
+    tests/unit/test_brief_wording_grounding.py, which pins that limit."""
+    if len((line.quote or "").strip()) < MIN_QUOTE_CHARS:
+        return (
+            f"line must include a `quote`: an exact fragment of at least {MIN_QUOTE_CHARS} "
+            "characters copied from the fact it cites"
+        )
+    line_ids, line_numbers = _specifics(line.text)
+    source_ids, source_numbers = _specifics(source)
+    extra = [form for key, form in line_ids.items() if key not in source_ids]
+    extra += [form for value, form in line_numbers.items() if value not in source_numbers]
+    if extra:
+        return f"line mentions {', '.join(extra)}, which does not appear in the fact it cites"
+    return None
+
 
 class MorningBriefLineDraft(BaseModel):
     """The model's own one-line prose for exactly one input fact.
-    reference_id is expected to be echoed back exactly as given -- the
-    grounding kernel is what actually enforces that it is, not this
-    schema, since a schema can only check shape, not truth."""
+    reference_id is expected to be echoed back exactly as given, and quote
+    to be an exact fragment of that fact's own detail text -- the grounding
+    kernel is what actually enforces both, not this schema, since a schema
+    can only check shape, not truth."""
 
     text: str
     reference_id: str | None = None
+    quote: str | None = None
 
 
 class MorningBriefSectionDraft(BaseModel):
@@ -270,10 +320,10 @@ def _generate_section_lines(
             gateway, rendered, MorningBriefSectionDraft, tool_name="morning_brief_section"
         )
         return [
-            FactualLine(text=line.text, message_id=line.reference_id, quote=None) for line in draft.lines
+            FactualLine(text=line.text, message_id=line.reference_id, quote=line.quote) for line in draft.lines
         ]
 
-    return ground_with_retry(generate_fn, section_lookup)
+    return ground_with_retry(generate_fn, section_lookup, content_check=_check_line_content)
 
 
 def _order_key(section_key: str, facts: MorningBriefFacts) -> Callable[[FactualLine], int]:

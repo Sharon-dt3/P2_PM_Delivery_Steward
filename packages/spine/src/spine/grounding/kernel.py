@@ -48,6 +48,13 @@ logger = logging.getLogger("spine.grounding.kernel")
 
 MessageLookup = Callable[[str], str | None]
 
+# An optional third check a caller can supply: given a line that already
+# resolved (and passed any quote check) and the text it resolved to, return
+# None if the line's content is supported, or a short reason if it is not.
+# The kernel stays generic -- what "supported" means (ids, numbers, anything
+# else) is the caller's own rule.
+ContentCheck = Callable[["FactualLine", str], str | None]
+
 
 class FactualLine(BaseModel):
     """One factual claim a model produced. text is the human-readable
@@ -63,7 +70,7 @@ class FactualLine(BaseModel):
 @dataclass(frozen=True)
 class GroundingFailure:
     line: FactualLine
-    reason: str  # "unresolvable_message_id" | "quote_not_verbatim"
+    reason: str  # "unresolvable_message_id" | "quote_not_verbatim" | "content_not_supported"
     detail: str
 
 
@@ -73,9 +80,13 @@ class GroundingResult:
     failures: list[GroundingFailure] = field(default_factory=list)
 
 
-def verify_line(line: FactualLine, message_lookup: MessageLookup) -> GroundingFailure | None:
+def verify_line(
+    line: FactualLine, message_lookup: MessageLookup, content_check: ContentCheck | None = None
+) -> GroundingFailure | None:
     """Check one line. Returns None if it passes, otherwise the
-    GroundingFailure describing exactly why it doesn't."""
+    GroundingFailure describing exactly why it doesn't. content_check, if
+    given, runs last and only on a line that already resolved and quoted
+    correctly."""
     if not line.message_id:
         return GroundingFailure(
             line=line,
@@ -98,17 +109,24 @@ def verify_line(line: FactualLine, message_lookup: MessageLookup) -> GroundingFa
             detail=f"quote {line.quote!r} is not a literal substring of message_id={line.message_id!r}",
         )
 
+    if content_check is not None:
+        problem = content_check(line, resolved_text)
+        if problem:
+            return GroundingFailure(line=line, reason="content_not_supported", detail=problem)
+
     return None
 
 
-def verify_lines(lines: list[FactualLine], message_lookup: MessageLookup) -> GroundingResult:
+def verify_lines(
+    lines: list[FactualLine], message_lookup: MessageLookup, content_check: ContentCheck | None = None
+) -> GroundingResult:
     """Partition a batch of lines into what grounds and what doesn't.
     Does not retry or log anything itself -- that is
     ground_with_retry's job; this is the pure check callers can also
     use directly when they don't need the retry loop."""
     result = GroundingResult()
     for line in lines:
-        failure = verify_line(line, message_lookup)
+        failure = verify_line(line, message_lookup, content_check)
         if failure is None:
             result.grounded_lines.append(line)
         else:
@@ -121,6 +139,7 @@ def ground_with_retry(
     message_lookup: MessageLookup,
     *,
     max_attempts: int = 3,
+    content_check: ContentCheck | None = None,
 ) -> GroundingResult:
     """generate_fn(feedback) -> list[FactualLine]. Called with
     feedback=None on the first attempt; on every subsequent attempt,
@@ -139,7 +158,7 @@ def ground_with_retry(
 
     for attempt in range(1, max_attempts + 1):
         lines = generate_fn(feedback)
-        result = verify_lines(lines, message_lookup)
+        result = verify_lines(lines, message_lookup, content_check)
 
         if not result.failures:
             return result

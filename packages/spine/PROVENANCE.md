@@ -9,3 +9,12 @@ member uses the root lock).
 P2 may change this copy freely; P1's spine is not touched. At PM-40 ("spine
 hardening for P3") the two are compared with `diff -r` and the changes worth
 keeping are folded back into P1's spine deliberately, not implicitly.
+
+## Changes made in this copy since the export
+
+- `spine.grounding.kernel`: an optional `content_check` hook on `verify_line`,
+  `verify_lines` and `ground_with_retry` (failure reason `content_not_supported`).
+  Backwards compatible: with no hook the kernel behaves exactly as before.
+  P2 uses it to require a verbatim quote and to reject ids/numbers a brief line
+  invents. Four new tests in `tests/test_grounding.py`. Candidate for folding
+  back into P1's spine at PM-40 ("citation resolver generalisation").

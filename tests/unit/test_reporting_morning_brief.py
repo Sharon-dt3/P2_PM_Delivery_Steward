@@ -31,8 +31,33 @@ import json
 from spine.llm.gateway import LLMResponse
 
 from pm.adapters.commitments import Commitment
-from pm.reporting.facts import BlockerFact, ItemFact, MorningBriefFacts, PersonFacts, SprintScopeFacts
+from pm.eval.pm12_cases import _prompt_facts
+from pm.reporting.facts import (
+    BlockerFact,
+    ItemFact,
+    MorningBriefFacts,
+    PersonFacts,
+    SprintScopeFacts,
+)
 from pm.reporting.morning_brief import generate_morning_brief
+
+
+def _with_faithful_quotes(reply: str, prompt: str) -> str:
+    """The prompt now requires each line to carry a verbatim `quote` of the
+    fact it cites. These older tests are about references, not quoting, so
+    the fake model behaves like one following that rule: a canned line that
+    cites a fact shown in the prompt and has no quote gets that fact's detail
+    as its quote. Lines citing nothing real, and replies that are not valid
+    JSON, are left exactly as the test wrote them."""
+    details = dict(_prompt_facts(prompt))
+    try:
+        body = json.loads(reply)
+    except ValueError:
+        return reply
+    for line in body.get("lines", []):
+        if line.get("reference_id") in details and "quote" not in line:
+            line["quote"] = details[line["reference_id"]]
+    return json.dumps(body)
 
 
 class FakeGateway:
@@ -48,7 +73,7 @@ class FakeGateway:
     def generate(self, prompt: str, **kwargs: object) -> LLMResponse:
         self.prompts.append(prompt)
         self.calls += 1
-        text = self._responses.pop(0)
+        text = _with_faithful_quotes(self._responses.pop(0), prompt)
         return LLMResponse(
             text=text,
             provider="fake",
