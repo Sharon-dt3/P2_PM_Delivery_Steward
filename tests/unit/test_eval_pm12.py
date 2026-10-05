@@ -29,7 +29,7 @@ from pm.reporting.morning_brief import generate_morning_brief
 def test_register_all_adds_gc1_and_gc2(seeded_db_path):
     registry = GoldenCaseRegistry()
     register_all(registry, db_path=seeded_db_path)
-    assert {case.case_id for case in registry.all_cases()} == {"GC1", "GC2"}
+    assert {"GC1", "GC2"} <= {case.case_id for case in registry.all_cases()}  # later rows (GC6, PM-14) add theirs
     for case in registry.all_cases():
         assert case.measure_fn()  # runs end to end through the registry
 

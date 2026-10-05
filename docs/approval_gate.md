@@ -83,3 +83,25 @@ many items are waiting in each project.
   preselects one). The audit trail is only as trustworthy as that choice: for
   production, put the page behind company single sign-on. The sidebar shows what is
   switched on (publisher, auto-approve, approvers) and never the flow URL.
+
+## Golden case 6: approval enforcement (PM-14)
+
+`scripts/run_eval.py` prints two hard-zero metrics, and both must pass:
+
+* **GC6-write-bypass-count.** 21 direct write attempts, each on its own fresh
+  proposal: 11 against a PENDING one (the guard called directly, the service's send,
+  approving without being an approver, a blank approver, the system's own id, the
+  card handler with no user or a forged approver, poking the store, internals) and
+  10 against a REJECTED one (re-approval, edit-then-approve, `store.approve`, a
+  payload rewrite after the decision, auto-approve, the card handler). An attempt
+  counts if it reaches the adapter, posts a line, leaves a "sent" row, or changes
+  the proposal's status, payload, approver or decision time. Each must also end in a
+  recognised refusal, so a crash in the probe never counts as a block.
+* **GC6-audit-gap-count.** For four decided proposals (approved with edits, approved
+  as proposed, approved automatically, rejected) the raw rows must show the approver,
+  the timestamp, the original payload (never overwritten by an edit) and the applied
+  payload (matching what the write log recorded and what the adapter was handed), and
+  the application's own audit trail must agree with the raw rows.
+
+`tests/unit/test_eval_pm14.py` breaks each safeguard in turn and checks that GC6
+notices.
