@@ -20,6 +20,7 @@ from spine.approval.proposals import APPLIED, APPROVED, PENDING, REJECTED, Propo
 from pm.storage.db import DEFAULT_DB_PATH, get_connection
 
 AGENT = "agent"  # the actor recorded for things the system itself does
+AUTO_APPROVER = "system:auto-approve"  # the actor recorded when the system approves (see pm.approval.service)
 
 
 def write_audit(
@@ -114,6 +115,13 @@ def describe(trail: AuditTrail) -> str:
         lines.append("Awaiting a decision: nobody has approved or rejected it yet.")
     elif trail.status == REJECTED:
         lines.append(f"Rejected by {trail.approver_id} at {trail.decided_at}.")
+    elif trail.approver_id == AUTO_APPROVER:
+        approval = next((e for e in trail.events if e["action"] == "proposal.approved"), None)
+        reason = (approval or {}).get("details", {}).get("reason", "")
+        lines.append(
+            f"Automatically approved by the system at {trail.decided_at}; no person reviewed it"
+            + (f" ({reason})." if reason else ".")
+        )
     else:
         edited = " with edits" if trail.edited else " as proposed"
         lines.append(f"Approved by {trail.approver_id} at {trail.decided_at}{edited}.")

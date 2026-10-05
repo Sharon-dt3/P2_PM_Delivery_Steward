@@ -25,6 +25,23 @@ morning job ──proposes──▶ proposal (pending) ──▶ person decides 
   answers: who approved this entry, when, and what did the agent originally
   propose — plus what was finally applied and every send attempt.
 
+## Unattended mode: auto-approve
+
+`PM_AUTO_APPROVE=1` lets the system approve a brief itself, so nobody has to
+click. It goes through the same gate (proposal, approval, `guarded_send`, logs,
+audit); only the approver differs. The approval is recorded as
+`system:auto-approve` with `automatic: true` and the reason, never as a person,
+and no person can act under that id. It happens only when:
+
+* grounding dropped nothing and no fact fell back to "[as recorded]" -- anything
+  else waits for a person;
+* a person has already approved a brief for that channel (the first post to a
+  channel is never unattended), unless `PM_AUTO_APPROVE_REQUIRES_FIRST_HUMAN=0`;
+* a real publisher's target is on the channel allowlist.
+
+The text is never edited. A failed send leaves it approved; `approve.py retry ID`
+sends it. Off unless the switch is exactly `1`.
+
 ## Surfaces
 
 | Surface | Status |

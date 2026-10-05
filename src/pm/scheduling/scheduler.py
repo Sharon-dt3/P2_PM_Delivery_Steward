@@ -74,6 +74,7 @@ def build_scheduler(
     gateway,
     *,
     db_path: str | Path = DEFAULT_DB_PATH,
+    publisher=None,
 ) -> BackgroundScheduler:
     """The real production scheduler: per project, one CronTrigger for the
     morning brief and one for the end-of-day snapshot, firing at that
@@ -90,6 +91,7 @@ def build_scheduler(
             "config": config,
             "gateway": gateway,
             "db_path": db_path,
+            "publisher": publisher,  # None: chosen from TEAMS_PUBLISHER_MODE when the job fires
         },
     )
     return add_scheduled_jobs(

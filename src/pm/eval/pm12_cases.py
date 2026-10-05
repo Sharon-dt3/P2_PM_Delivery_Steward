@@ -30,6 +30,7 @@ contain only text from lines legitimately that person's. Scenarios:
   - empty day: no facts, and the model must not be called;
   - commit-only: a person whose only activity is commits;
   - posted message: what actually goes to Teams adds nothing to the brief;
+  - auto-approve: unattended mode never posts a brief grounding cut lines from;
   - live model brief, when a real model is evaluated;
   - extra probes registered with register_gc2_probe (the end-of-day summary,
     PM-22, registers here once it exists; the row says "brief and summary").
@@ -60,7 +61,7 @@ from pm.adapters.commitments import CommitmentsMock
 from pm.adapters.risk_log import RiskLogMock
 from pm.adapters.teams import get_teams_reader
 from pm.adapters.tracker import TrackerMock
-from pm.approval.service import ApprovalPolicy, approve_and_send
+from pm.approval.service import AUTO_APPROVER, ApprovalPolicy, approve_and_send
 from pm.eval.golden_cases import MORNING
 from pm.reporting.facts import (
     MorningBriefFacts,
@@ -80,7 +81,7 @@ from pm.reporting.morning_brief import (
     generate_morning_brief,
 )
 from pm.seed.build import CHANNEL_ID, build_seed
-from pm.state.snapshot import build_snapshot
+from pm.state.snapshot import build_current_snapshot, build_snapshot
 from pm.storage.db import DEFAULT_DB_PATH, MIGRATIONS_DIR, get_connection
 
 GC1_TARGET = 0.90
@@ -573,6 +574,60 @@ def _posted_message_problems() -> list[str]:
     return problems
 
 
+def _auto_approve_problems() -> list[str]:
+    """Unattended mode must never post a brief grounding had to cut lines from,
+    and what it does post must be the brief's own text, recorded as automatic."""
+    from p1.adapters.teams_publisher_mock import LogPublisher
+    from spine.approval.proposals import PENDING, ProposalStore
+    from spine.storage.db import run_migrations
+
+    from pm.jobs.morning_brief_job import run_morning_brief_job
+    from pm.scheduling.config import ProjectScheduleConfig
+
+    config = ProjectScheduleConfig(
+        channel_id=CHANNEL_ID, timezone="Asia/Colombo", working_days=["Mon", "Tue", "Wed", "Thu", "Fri"],
+        morning_brief_time=time(8, 0), end_of_day_time=time(17, 0),
+    )
+    policy = ApprovalPolicy(auto_approve=True, auto_approve_requires_first_human=False)
+    day_one = datetime(2026, 9, 14, 2, 30, tzinfo=timezone.utc)
+    day_two = datetime(2026, 9, 15, 2, 30, tzinfo=timezone.utc)
+    problems: list[str] = []
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "probe.db"
+        run_migrations(db_path, MIGRATIONS_DIR)
+        conn = get_connection(db_path)
+        try:
+            build_seed(conn)
+        finally:
+            conn.close()
+        log = LogPublisher(Path(tmp) / "log.jsonl")
+
+        snapshot = build_current_snapshot(db_path, taken_at=day_one.isoformat(), tz_name=config.timezone)
+        facts = compute_morning_brief_facts(snapshot)
+        for name, forgery in FORGERIES.items():  # a model that lies and never corrects itself
+            held = run_morning_brief_job(
+                config.model_copy(update={"publish_channel_id": f"19:probe-{name}@thread.tacv2"}),
+                ScriptedGateway(persistent_tamper=forgery.tamper(facts)),
+                moment=day_one, db_path=db_path, publisher=log, policy=policy,
+            )
+            if ProposalStore(db_path).get(held.proposal_id).status != PENDING:
+                problems.append(f"{name}: a brief with dropped lines was approved without a person")
+        if log.read_log():
+            problems.append("a brief with dropped lines was posted unattended")
+
+        sent = run_morning_brief_job(config, ScriptedGateway(), moment=day_two, db_path=db_path, publisher=log, policy=policy)
+        rows = log.read_log()
+        approved_by = ProposalStore(db_path).get(sent.proposal_id).approver_id
+        if len(rows) != 1:
+            problems.append(f"expected one unattended post for a clean brief, got {len(rows)}")
+        else:
+            brief_lines = set(sent.brief.content.split("\n"))
+            problems += [f"unattended post has a line not in the brief: {line!r}" for line in rows[0]["content"].split("\n")[2:] if line not in brief_lines]
+        if approved_by != AUTO_APPROVER:
+            problems.append(f"unattended approval recorded as {approved_by!r}, not the system")
+    return problems
+
+
 GC2_EXTRA_PROBES: list[tuple[str, Callable[[], list[str]]]] = []
 
 
@@ -607,6 +662,7 @@ def measure_gc2(facts: MorningBriefFacts | None = None, live_brief: MorningBrief
         generate_morning_brief(commit_only_facts, ScriptedGateway()), commit_only_facts
     )
     scenarios["posted message"] = _posted_message_problems()
+    scenarios["auto-approve"] = _auto_approve_problems()
 
     if live_brief is not None:
         scenarios["live model brief"] = count_fabrications(live_brief, facts)

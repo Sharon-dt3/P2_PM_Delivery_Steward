@@ -8,6 +8,7 @@ the Teams card calls, so a decision made here leaves the same records.
   show   ID                         one proposal's text
   approve ID --as WHO [--edit TEXT | --edit-file PATH]
   reject  ID --as WHO [--reason TEXT]
+  retry   ID                        send an approved brief whose send failed
   audit   ID                        who decided, when, original vs applied
 
 WHO must be listed in PM_APPROVER_IDS (comma-separated). The publisher is
@@ -53,6 +54,8 @@ def _parser() -> argparse.ArgumentParser:
     reject.add_argument("proposal_id")
     reject.add_argument("--as", dest="approver", required=True)
     reject.add_argument("--reason")
+    retry = sub.add_parser("retry")
+    retry.add_argument("proposal_id")
     audit = sub.add_parser("audit")
     audit.add_argument("proposal_id")
     return parser
@@ -81,7 +84,9 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         return 0
 
-    if args.command == "approve":
+    if args.command == "retry":
+        result = service.send_approved(args.proposal_id, **kwargs)
+    elif args.command == "approve":
         edited = args.edit
         if args.edit_file:
             edited = Path(args.edit_file).read_text()

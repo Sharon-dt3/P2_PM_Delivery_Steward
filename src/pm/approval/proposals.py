@@ -27,6 +27,8 @@ PROPOSED = "proposed"
 ALREADY_PROPOSED = "already_proposed"
 FAILED = "failed"
 NOT_ATTEMPTED = "not_attempted"
+AUTO_SENT = "auto_sent"  # approved by the system under auto-approve, and sent
+AUTO_SEND_FAILED = "auto_send_failed"  # approved by the system; the send failed (retryable)
 
 
 def format_brief_message(label: str, local_date: str, content: str) -> str:

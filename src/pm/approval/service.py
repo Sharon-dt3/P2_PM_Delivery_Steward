@@ -25,6 +25,7 @@ from pathlib import Path
 
 from p1.adapters.teams_publisher_mock import LogPublisher
 from spine.approval.proposals import (
+    APPLIED,
     APPROVED,
     PENDING,
     IllegalTransitionError,
@@ -35,7 +36,9 @@ from spine.approval.proposals import (
 from spine.approval.write_guard import WriteRefusedError, guarded_send
 
 from pm.adapters.teams import get_teams_publisher
-from pm.approval.audit import AGENT, write_audit
+from pm.approval.audit import AGENT, AUTO_APPROVER, write_audit
+from pm.approval.proposals import BRIEF_PROPOSAL_TYPE
+from pm.reporting.morning_brief import _AS_RECORDED
 from pm.scheduling.config import P1_CHANNEL_CONFIG_DIR
 from pm.storage.db import DEFAULT_DB_PATH
 
@@ -43,12 +46,16 @@ SENT = "sent"
 REJECTED_OUTCOME = "rejected"
 REFUSED = "refused"
 SEND_FAILED = "send_failed"
+HELD = "held"  # auto-approve declined: a person has to decide
+
 
 
 @dataclass(frozen=True)
 class ApprovalPolicy:
     approver_ids: frozenset[str] = frozenset()
     allowlisted_channel_ids: list[str] = field(default_factory=list)
+    auto_approve: bool = False  # PM_AUTO_APPROVE=1: the system approves safe briefs itself
+    auto_approve_requires_first_human: bool = True  # a person must have approved one for the channel first
 
 
 @dataclass(frozen=True)
@@ -71,19 +78,23 @@ class PendingApproval:
 
 def load_approval_policy(config_dir: str | Path = P1_CHANNEL_CONFIG_DIR) -> ApprovalPolicy:
     """Approvers are the comma-separated ids in PM_APPROVER_IDS (none by
-    default); the channel allowlist is P1's own (config/channels)."""
+    default); the channel allowlist is P1's own (config/channels). Auto-approve
+    is on only when PM_AUTO_APPROVE is exactly "1"; its first-approval rule is
+    on unless PM_AUTO_APPROVE_REQUIRES_FIRST_HUMAN is exactly "0"."""
     from p1.config.loader import ChannelConfigStore
 
     raw = os.environ.get("PM_APPROVER_IDS", "")
     return ApprovalPolicy(
         approver_ids=frozenset(part.strip() for part in raw.split(",") if part.strip()),
         allowlisted_channel_ids=ChannelConfigStore(config_dir).list_allowlisted_channels(),
+        auto_approve=os.environ.get("PM_AUTO_APPROVE", "") == "1",
+        auto_approve_requires_first_human=os.environ.get("PM_AUTO_APPROVE_REQUIRES_FIRST_HUMAN", "1") != "0",
     )
 
 
 def _is_approver(approver_id: str, policy: ApprovalPolicy) -> bool:
     who = (approver_id or "").strip()
-    return bool(who) and who in policy.approver_ids
+    return bool(who) and who != AUTO_APPROVER and who in policy.approver_ids
 
 
 def _normalise(text: str) -> str:
@@ -255,3 +266,78 @@ def _execute(proposal_id: str, *, actor: str, publisher, policy: ApprovalPolicy,
 
     write_audit(db_path, actor=actor, action="proposal.sent", proposal_id=proposal_id, details={"target": target})
     return ActionResult(proposal_id, SENT, f"sent to {target}")
+
+
+def _held(proposal_id: str, why: str) -> ActionResult:
+    return ActionResult(proposal_id, HELD, why)
+
+
+def _dropped_count(proposal: Proposal) -> int:
+    dropped = proposal.original_model_output.get("dropped") or {}
+    return sum(len(failures) for failures in dropped.values())
+
+
+def _a_person_has_approved_one_before(store: ProposalStore, proposal: Proposal) -> bool:
+    target = proposal.payload.get("target_channel")
+    return any(
+        p.type == BRIEF_PROPOSAL_TYPE
+        and p.payload.get("target_channel") == target
+        and p.approver_id not in (None, AUTO_APPROVER)
+        for p in store.list_by_status(APPLIED)
+    )
+
+
+def auto_approve_and_send(
+    proposal_id: str,
+    *,
+    publisher=None,
+    policy: ApprovalPolicy | None = None,
+    store: ProposalStore | None = None,
+    db_path: str | Path = DEFAULT_DB_PATH,
+) -> ActionResult:
+    """Unattended approval: the system approves a pending proposal itself and
+    executes it -- only when that is safe, otherwise HELD for a person.
+
+    Safe means: auto-approve is switched on; grounding dropped nothing and no
+    fact fell back to "[as recorded]"; (unless switched off) a person has
+    already approved a brief for this channel; and a real publisher's target is
+    on the allowlist. The approval is recorded under AUTO_APPROVER, as
+    automatic, with the reason -- never as a person -- and the text is never
+    edited. Everything after that is the ordinary gate (guarded_send, logs)."""
+    policy = policy if policy is not None else load_approval_policy()
+    store = store or ProposalStore(db_path)
+    if not policy.auto_approve:
+        return _held(proposal_id, "auto-approve is off")
+    try:
+        publisher = publisher if publisher is not None else get_teams_publisher()
+    except Exception as exc:  # noqa: BLE001 - a misconfigured publisher means it stays proposed
+        return _held(proposal_id, f"publisher not available: {type(exc).__name__}: {exc}")
+    try:
+        proposal = store.get(proposal_id)
+    except ProposalNotFoundError:
+        return ActionResult(proposal_id, REFUSED, f"no proposal with id {proposal_id!r}")
+    if proposal.status != PENDING:
+        return ActionResult(proposal_id, REFUSED, f"proposal is {proposal.status!r}, not pending")
+
+    dropped = _dropped_count(proposal)
+    if dropped or _AS_RECORDED in proposal.payload.get("content", ""):
+        return _held(proposal_id, f"grounding dropped {dropped} line(s) in this brief; a person must review it")
+    if policy.auto_approve_requires_first_human and not _a_person_has_approved_one_before(store, proposal):
+        return _held(proposal_id, "waiting for a person to approve a first brief for this channel")
+    scope_problem = _out_of_scope(proposal, publisher, policy)
+    if scope_problem:
+        return _held(proposal_id, scope_problem)
+
+    reason = "every line grounded; " + (
+        "a person had already approved a brief for this channel"
+        if policy.auto_approve_requires_first_human else "the first-approval rule is switched off"
+    )
+    try:
+        store.approve(proposal_id, approver_id=AUTO_APPROVER)
+    except IllegalTransitionError as exc:
+        return ActionResult(proposal_id, REFUSED, str(exc))
+    write_audit(
+        db_path, actor=AUTO_APPROVER, action="proposal.approved", proposal_id=proposal_id,
+        details={"edited": False, "automatic": True, "reason": reason},
+    )
+    return _execute(proposal_id, actor=AUTO_APPROVER, publisher=publisher, policy=policy, store=store, db_path=db_path)

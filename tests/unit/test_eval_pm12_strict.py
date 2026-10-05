@@ -120,7 +120,7 @@ def test_gc2_is_zero_and_says_which_scenarios_it_covered(facts):
     (result,) = measure_gc2(facts)
 
     assert result.measured == 0 and result.passed
-    for scenario in ("seeded", "planted forgeries", "zero-activity", "empty day", "commit-only", "posted message"):
+    for scenario in ("seeded", "planted forgeries", "zero-activity", "empty day", "commit-only", "posted message", "auto-approve"):
         assert scenario in result.detail, scenario
 
 
@@ -131,6 +131,18 @@ def test_the_commit_only_scenario_is_really_in_gc2(facts):
     assert not any((person.committed, person.delivered, person.pending, person.blocked)) and person.commit_count > 0
     brief = generate_morning_brief(with_commit_only, ScriptedGateway())
     assert f"- Commits: {person.commit_count} recorded; no tracker items." in brief.content
+
+
+def test_the_auto_approve_probe_is_clean_and_would_notice_an_unattended_bad_brief(monkeypatch):
+    assert pm12_cases._auto_approve_problems() == []
+
+    from pm.approval import service
+
+    # simulate a broken safety check: auto-approve no longer looks at what grounding dropped
+    monkeypatch.setattr(service, "_dropped_count", lambda proposal: 0)
+    monkeypatch.setattr(service, "_AS_RECORDED", "\x00never")
+
+    assert any("dropped lines" in p for p in pm12_cases._auto_approve_problems())
 
 
 def test_a_registered_extra_probe_counts_toward_gc2(facts, monkeypatch):

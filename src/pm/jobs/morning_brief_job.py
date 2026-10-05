@@ -37,12 +37,22 @@ from zoneinfo import ZoneInfo
 
 from spine.config.calendar import is_working_day
 
+from pm.adapters.teams import get_teams_publisher
 from pm.approval.proposals import (
     ALREADY_PROPOSED,
+    AUTO_SEND_FAILED,
+    AUTO_SENT,
     FAILED,
     NOT_ATTEMPTED,
     PROPOSED,
     propose_morning_brief,
+)
+from pm.approval.service import (
+    SEND_FAILED,
+    SENT,
+    ApprovalPolicy,
+    auto_approve_and_send,
+    load_approval_policy,
 )
 from pm.jobs.snapshot_capture import capture_snapshot
 from pm.reporting.facts import compute_morning_brief_facts
@@ -72,6 +82,8 @@ def run_morning_brief_job(
     *,
     moment: datetime | None = None,
     db_path: str | Path = DEFAULT_DB_PATH,
+    publisher=None,
+    policy: ApprovalPolicy | None = None,
 ) -> MorningBriefJobResult:
     """Idempotent for a given `moment`: calling this twice for the exact
     same simulated (or, in production, real) instant reads back the
@@ -99,7 +111,7 @@ def run_morning_brief_job(
     facts = compute_morning_brief_facts(snapshot)
     brief = generate_morning_brief(facts, gateway)
 
-    status, detail, proposal_id = _propose(config, brief, local_day.isoformat(), taken_at, db_path)
+    status, detail, proposal_id = _propose(config, brief, local_day.isoformat(), taken_at, db_path, publisher, policy)
     return MorningBriefJobResult(
         channel_id=config.channel_id,
         taken_at=taken_at,
@@ -112,15 +124,34 @@ def run_morning_brief_job(
     )
 
 
-def _propose(config, brief, local_date, taken_at, db_path):
-    """Put the finished brief up for approval. A failure here is reported, not
-    raised: the brief is already made."""
+def _propose(config, brief, local_date, taken_at, db_path, publisher, policy):
+    """Put the finished brief up for approval -- and, when auto-approve is on
+    and the brief is safe to send unattended, have the system approve it. A
+    failure here is reported, not raised: the brief is already made."""
     try:
         proposal, created = propose_morning_brief(
             brief, config, local_date=local_date, taken_at=taken_at, db_path=db_path
         )
     except Exception as exc:  # noqa: BLE001 - a failed proposal must not take the scheduled job down
         return FAILED, f"{type(exc).__name__}: {exc}", None
-    if created:
-        return PROPOSED, f"awaiting approval (proposal {proposal.id})", proposal.id
-    return ALREADY_PROPOSED, f"a proposal for {local_date} already exists (status {proposal.status})", proposal.id
+    if not created:
+        return ALREADY_PROPOSED, f"a proposal for {local_date} already exists (status {proposal.status})", proposal.id
+
+    waiting = f"awaiting approval (proposal {proposal.id})"
+    try:
+        policy = policy if policy is not None else load_approval_policy()
+    except Exception as exc:  # noqa: BLE001 - if the policy cannot be read, nothing is sent unattended
+        return PROPOSED, f"{waiting}; auto-approve not applied: {type(exc).__name__}: {exc}", proposal.id
+    if not policy.auto_approve:
+        return PROPOSED, waiting, proposal.id
+
+    try:
+        publisher = publisher if publisher is not None else get_teams_publisher()
+    except Exception as exc:  # noqa: BLE001 - a misconfigured publisher leaves it waiting for a person
+        return PROPOSED, f"{waiting}; auto-approve not applied: {type(exc).__name__}: {exc}", proposal.id
+    outcome = auto_approve_and_send(proposal.id, publisher=publisher, policy=policy, db_path=db_path)
+    if outcome.outcome == SENT:
+        return AUTO_SENT, f"auto-approved and sent (proposal {proposal.id})", proposal.id
+    if outcome.outcome == SEND_FAILED:
+        return AUTO_SEND_FAILED, f"auto-approved but the send failed: {outcome.detail}", proposal.id
+    return PROPOSED, f"{waiting}; held for a person: {outcome.detail}", proposal.id
