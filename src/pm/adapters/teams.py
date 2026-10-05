@@ -69,8 +69,25 @@ def get_teams_reader(
     return ScopedTeamsReader(reader, channel_ids, db_path=str(db_path))
 
 
-def get_teams_publisher(log_path: str | Path = DEFAULT_LOG_PATH) -> TeamsPublisher:
-    """P1's own LogPublisher, logging to this repo's own
-    data/outbound_log.jsonl -- each repo keeps its own inspectable
-    outbound log rather than sharing P1's."""
-    return LogPublisher(log_path=log_path)
+def get_teams_publisher(log_path: str | Path | None = None) -> TeamsPublisher:
+    """Chosen by TEAMS_PUBLISHER_MODE exactly as P1's own factory chooses it:
+    "mock" (the default) is P1's LogPublisher, logging to this repo's own
+    data/outbound_log.jsonl (or log_path, or TEAMS_PUBLISHER_LOG_PATH) so each
+    repo keeps its own inspectable outbound log; "power_automate" is P1's
+    PowerAutomateTeamsPublisher against POWER_AUTOMATE_FLOW_URL. Choosing the
+    real one does not by itself allow a post -- see pm.delivery.brief_delivery."""
+    mode = os.environ.get("TEAMS_PUBLISHER_MODE", "mock")
+
+    if mode == "mock":
+        resolved = log_path or os.environ.get("TEAMS_PUBLISHER_LOG_PATH") or DEFAULT_LOG_PATH
+        return LogPublisher(log_path=resolved)
+    if mode == "power_automate":
+        from p1.adapters.teams_publisher_power_automate import (
+            PowerAutomateTeamsPublisher,
+        )
+
+        flow_url = os.environ.get("POWER_AUTOMATE_FLOW_URL")
+        if not flow_url:
+            raise RuntimeError("TEAMS_PUBLISHER_MODE=power_automate requires POWER_AUTOMATE_FLOW_URL")
+        return PowerAutomateTeamsPublisher(flow_url=flow_url)
+    raise ValueError(f"Unknown TEAMS_PUBLISHER_MODE: {mode!r}")

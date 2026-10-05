@@ -56,6 +56,8 @@ class ProjectScheduleConfig(BaseModel):
     non_working_dates: list[date] = []
     morning_brief_time: time
     end_of_day_time: time
+    publish_channel_id: str | None = None  # where the brief is posted; None means channel_id itself
+    message_label: str = ""  # prepended to what is posted, e.g. "[sample data] "
 
 
 def default_project_schedule_config(
