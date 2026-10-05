@@ -17,15 +17,10 @@ either of this repo's two jobs -- so they are this repo's own new
 fields, given sensible defaults below rather than pulled from anywhere
 else.
 
-end_of_day_time is real, validated configuration (PM-11's own "Jobs at
-configured local times" literally means both jobs' times exist and
-validate), but pm.scheduling.scheduler.build_scheduler() does not yet
-register a real APScheduler job against it: PM-22 (end-of-day summary)
-is what that job's own body will call, and PM-22 has not been built yet.
-Wiring a CronTrigger to a job function that doesn't exist would mean a
-real, scheduled crash the first time it fired -- worse than not
-scheduling it at all -- so this field stays configured-but-dormant until
-PM-22 lands. See pm.scheduling.scheduler's own docstring.
+end_of_day_time is validated configuration like the morning time, and
+pm.scheduling.scheduler.build_scheduler() registers a real job against it:
+pm.jobs.end_of_day_job captures the end-of-day snapshot. PM-22 (end-of-day
+summary) builds the summary on top of that job.
 """
 
 from __future__ import annotations

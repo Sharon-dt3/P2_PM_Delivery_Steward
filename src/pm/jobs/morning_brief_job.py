@@ -40,11 +40,10 @@ from zoneinfo import ZoneInfo
 
 from spine.config.calendar import is_working_day
 
+from pm.jobs.snapshot_capture import capture_snapshot
 from pm.reporting.facts import compute_morning_brief_facts
 from pm.reporting.morning_brief import MorningBrief, generate_morning_brief
 from pm.scheduling.config import ProjectScheduleConfig
-from pm.state.snapshot import build_current_snapshot
-from pm.state.store import DuplicateSnapshotError, read_snapshot, save_snapshot
 from pm.storage.db import DEFAULT_DB_PATH
 
 SKIPPED_NON_WORKING_DAY = "skipped_non_working_day"
@@ -88,14 +87,7 @@ def run_morning_brief_job(
         )
 
     taken_at = resolved_moment.isoformat()
-    snapshot = build_current_snapshot(db_path=db_path, taken_at=taken_at)
-    try:
-        save_snapshot(snapshot, db_path=db_path)
-    except DuplicateSnapshotError:
-        # This exact moment was already run once -- read back what that
-        # run persisted rather than silently discarding it or crashing a
-        # second, harmless call for the same instant.
-        snapshot = read_snapshot(taken_at, db_path=db_path)
+    snapshot = capture_snapshot(config, resolved_moment, db_path=db_path)
 
     facts = compute_morning_brief_facts(snapshot)
     brief = generate_morning_brief(facts, gateway)

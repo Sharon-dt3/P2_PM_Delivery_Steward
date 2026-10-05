@@ -30,7 +30,11 @@ from datetime import datetime, time, timezone
 from apscheduler.triggers.cron import CronTrigger
 from spine.llm.gateway import LLMResponse
 
-from pm.jobs.morning_brief_job import GENERATED, SKIPPED_NON_WORKING_DAY, run_morning_brief_job
+from pm.jobs.morning_brief_job import (
+    GENERATED,
+    SKIPPED_NON_WORKING_DAY,
+    run_morning_brief_job,
+)
 from pm.scheduling.config import ProjectScheduleConfig, default_project_schedule_config
 from pm.scheduling.scheduler import build_scheduler, is_due_for_morning_brief
 from pm.seed.build import CHANNEL_ID
@@ -42,8 +46,9 @@ class AutoGroundedFakeGateway:
 
     def generate(self, prompt: str, **kwargs: object) -> LLMResponse:
         self.calls += 1
-        reference_ids = re.findall(r"reference_id:\s*(\S+)", prompt)
-        lines = [{"text": f"(auto-grounded) {ref}", "reference_id": ref} for ref in reference_ids]
+        # Echo each fact back faithfully: its own detail as the line and as the quote.
+        facts = re.findall(r"reference_id:\s*(\S+)\n\s*detail:\s*(.+)", prompt)
+        lines = [{"text": detail, "reference_id": ref, "quote": detail} for ref, detail in facts]
         return LLMResponse(
             text=json.dumps({"lines": lines}),
             provider="fake",
@@ -116,6 +121,8 @@ def test_clock_override_run_produces_the_brief_at_the_simulated_time(seeded_db_p
     assert result.brief.facts.as_of == simulated_moment.isoformat()
     assert gateway.calls > 0
     assert result.brief.content  # non-empty: real prose was actually generated
+    assert "[as recorded]" not in result.brief.content  # every line grounded; none fell back
+    assert not any(result.brief.dropped.values())
 
 
 def test_a_repeat_run_for_the_same_simulated_moment_reuses_the_persisted_snapshot(seeded_db_path):
@@ -172,7 +179,9 @@ def test_build_scheduler_wires_one_morning_brief_job_per_project():
     scheduler = build_scheduler(configs, gateway=object())
     jobs = {job.id: job for job in scheduler.get_jobs()}
 
-    assert set(jobs) == {"pm:morning_brief:proj-x", "pm:morning_brief:proj-y"}
+    assert set(jobs) == {
+        "pm:morning_brief:proj-x", "pm:morning_brief:proj-y", "pm:end_of_day:proj-x", "pm:end_of_day:proj-y",
+    }
 
     trigger_x = jobs["pm:morning_brief:proj-x"].trigger
     assert str(trigger_x.timezone) == "Asia/Tokyo"
@@ -186,11 +195,10 @@ def test_build_scheduler_never_starts_the_scheduler():
     assert scheduler.running is False
 
 
-def test_build_scheduler_registers_no_job_for_end_of_day_time_yet():
-    """PM-22 (end-of-day summary) hasn't been built yet -- see
-    pm.scheduling.config's own docstring. This test keeps that gap
-    visible: it must start failing, not silently pass, the day a real
-    end-of-day job is wired in without updating this test to match."""
+def test_build_scheduler_registers_one_end_of_day_job_per_project_too():
+    """PM-11 is "morning and end of day": both jobs exist. The end-of-day one
+    captures the end-of-day snapshot only (see pm.jobs.end_of_day_job);
+    PM-22 adds the summary."""
     scheduler = build_scheduler([_config()], gateway=object())
     job_ids = {job.id for job in scheduler.get_jobs()}
-    assert not any("end_of_day" in job_id for job_id in job_ids)
+    assert job_ids == {f"pm:morning_brief:{CHANNEL_ID}", f"pm:end_of_day:{CHANNEL_ID}"}

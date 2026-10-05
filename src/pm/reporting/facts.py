@@ -57,10 +57,12 @@ the four normal buckets or PM-10's own explicit no-update line.
 from __future__ import annotations
 
 from datetime import date
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel
 
 from pm.adapters.commitments import Commitment
+from pm.state.moments import parse_moment
 from pm.state.snapshot import ProjectSnapshot
 
 _SEVERITY_RANK = {"high": 0, "medium": 1, "low": 2}
@@ -234,7 +236,9 @@ def compute_morning_brief_facts(snapshot: ProjectSnapshot) -> MorningBriefFacts:
     returns two equal MorningBriefFacts -- there is nothing in this
     function that could make it do otherwise (no clock read, no
     randomness, no I/O)."""
-    as_of_date = snapshot.taken_at[:10]
+    # The calendar date in the project's own timezone: sprint dates are local
+    # dates, and the UTC date of taken_at is a different day for a team far from UTC.
+    as_of_date = parse_moment(snapshot.taken_at).astimezone(ZoneInfo(snapshot.timezone)).date().isoformat()
     commit_counts, automated = _commits_by_person(snapshot)
     return MorningBriefFacts(
         as_of=snapshot.taken_at,

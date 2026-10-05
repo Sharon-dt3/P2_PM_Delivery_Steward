@@ -86,6 +86,7 @@ class ProjectSnapshot(BaseModel):
     risks: list[Risk] = []
     roster: list[Assignee] = []
     identities: IdentityMap = IdentityMap()  # how commit authors map to people; see pm.state.identities
+    timezone: str = "UTC"  # the project's own timezone: which calendar date taken_at falls on, for sprint scope
 
 
 def _now_iso() -> str:
@@ -150,6 +151,7 @@ def build_snapshot(
     commitments_store: CommitmentsStore,
     taken_at: str | None = None,
     identities: IdentityMap | None = None,
+    tz_name: str | None = None,
 ) -> ProjectSnapshot:
     """Reads all five sources once and normalises them into one
     ProjectSnapshot. Pure normalisation over what the five adapters
@@ -197,11 +199,16 @@ what lets two consecutive snapshots be told apart once persisted.
         risks=risks,
         roster=roster,
         identities=identities or IdentityMap(),
+        timezone=tz_name or "UTC",
     )
 
 
 def build_current_snapshot(
-    db_path=None, *, taken_at: str | None = None, identities: IdentityMap | None = None
+    db_path=None,
+    *,
+    taken_at: str | None = None,
+    identities: IdentityMap | None = None,
+    tz_name: str | None = None,
 ) -> ProjectSnapshot:
     """Convenience wiring for the common case: TrackerMock/CodeHostMock/
     RiskLogMock/CommitmentsMock over this repo's own seeded db, and P1's
@@ -234,4 +241,5 @@ def build_current_snapshot(
         commitments_store=commitments_store,
         taken_at=taken_at,
         identities=identities if identities is not None else load_identities(),
+        tz_name=tz_name,
     )
