@@ -31,11 +31,12 @@ WED = datetime(2026, 9, 16, 2, 30, tzinfo=timezone.utc)
 @pytest.fixture(autouse=True)
 def _env(monkeypatch, seeded_db_path, tmp_path):
     monkeypatch.setenv("PM_DB_PATH", str(seeded_db_path))
+    monkeypatch.setenv("P1_DB_PATH", str(tmp_path / "no_p1.db"))  # never fall back to the real P1 database
     monkeypatch.setenv("PM_APPROVER_IDS", "sharon.silva,noah.becker")
     monkeypatch.setenv("TEAMS_PUBLISHER_MODE", "mock")
     monkeypatch.setenv("TEAMS_PUBLISHER_LOG_PATH", str(tmp_path / "log.jsonl"))
-    monkeypatch.delenv("PM_AUTO_APPROVE", raising=False)
-    monkeypatch.delenv("PM_DASHBOARD_USER", raising=False)
+    monkeypatch.setenv("PM_AUTO_APPROVE", "0")  # set, not unset: the app's load_dotenv() would otherwise take it from the real .env
+    monkeypatch.setenv("PM_DASHBOARD_USER", "")
 
 
 @pytest.fixture()

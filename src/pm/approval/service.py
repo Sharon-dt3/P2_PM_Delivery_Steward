@@ -287,6 +287,45 @@ def _a_person_has_approved_one_before(store: ProposalStore, proposal: Proposal) 
     )
 
 
+def _auto_hold_reason(proposal: Proposal, policy: ApprovalPolicy, publisher, store: ProposalStore) -> str | None:
+    """Why auto-approve would NOT approve this pending proposal, or None if it
+    would. The one place these rules live: auto_approve_and_send acts on it and
+    explain_hold shows it, so they cannot disagree."""
+    dropped = _dropped_count(proposal)
+    if dropped or _AS_RECORDED in proposal.payload.get("content", ""):
+        return f"grounding dropped {dropped} line(s) in this brief; a person must review it"
+    if policy.auto_approve_requires_first_human and not _a_person_has_approved_one_before(store, proposal):
+        return "waiting for a person to approve a first brief for this channel"
+    return _out_of_scope(proposal, publisher, policy)
+
+
+def explain_hold(
+    proposal_id: str,
+    *,
+    policy: ApprovalPolicy | None = None,
+    publisher=None,
+    store: ProposalStore | None = None,
+    db_path: str | Path = DEFAULT_DB_PATH,
+) -> str | None:
+    """Why this brief is waiting for a person, in words; None means nothing is
+    holding it back (auto-approve would take it on its next run)."""
+    policy = policy if policy is not None else load_approval_policy()
+    store = store or ProposalStore(db_path)
+    try:
+        proposal = store.get(proposal_id)
+    except ProposalNotFoundError:
+        return f"no proposal with id {proposal_id!r}"
+    if proposal.status != PENDING:
+        return f"already {proposal.status}: nothing is waiting"
+    if not policy.auto_approve:
+        return "auto-approve is off, so a person has to decide"
+    try:
+        publisher = publisher if publisher is not None else get_teams_publisher()
+    except Exception as exc:  # noqa: BLE001 - reported as the reason, not raised
+        return f"publisher not available: {type(exc).__name__}: {exc}"
+    return _auto_hold_reason(proposal, policy, publisher, store)
+
+
 def auto_approve_and_send(
     proposal_id: str,
     *,
@@ -319,14 +358,9 @@ def auto_approve_and_send(
     if proposal.status != PENDING:
         return ActionResult(proposal_id, REFUSED, f"proposal is {proposal.status!r}, not pending")
 
-    dropped = _dropped_count(proposal)
-    if dropped or _AS_RECORDED in proposal.payload.get("content", ""):
-        return _held(proposal_id, f"grounding dropped {dropped} line(s) in this brief; a person must review it")
-    if policy.auto_approve_requires_first_human and not _a_person_has_approved_one_before(store, proposal):
-        return _held(proposal_id, "waiting for a person to approve a first brief for this channel")
-    scope_problem = _out_of_scope(proposal, publisher, policy)
-    if scope_problem:
-        return _held(proposal_id, scope_problem)
+    held = _auto_hold_reason(proposal, policy, publisher, store)
+    if held:
+        return _held(proposal_id, held)
 
     reason = "every line grounded; " + (
         "a person had already approved a brief for this channel"
