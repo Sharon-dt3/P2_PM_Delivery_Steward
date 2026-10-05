@@ -19,6 +19,7 @@ true copy, not an ever-growing pile.
 
 from __future__ import annotations
 
+import atexit
 import logging
 import os
 import re
@@ -153,7 +154,21 @@ _lock = threading.Lock()
 _state = {"running": False, "dirty": False, "thread": None}
 
 
+_atexit_registered = False
+EXIT_WAIT_SECONDS = 30.0
+
+
+def _wait_at_exit() -> None:
+    """Runs as the interpreter exits, so a short-lived command (--once, approve.py)
+    is not cut off in the middle of its sync."""
+    wait_for_pending(EXIT_WAIT_SECONDS)
+
+
 def _run_in_background(fn) -> None:
+    global _atexit_registered
+    if not _atexit_registered:
+        atexit.register(_wait_at_exit)
+        _atexit_registered = True
     thread = threading.Thread(target=fn, name="pm-mirror", daemon=True)
     _state["thread"] = thread
     thread.start()

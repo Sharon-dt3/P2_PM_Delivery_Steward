@@ -302,6 +302,38 @@ def test_the_refresh_runs_in_the_background_so_the_app_does_not_wait(small_db, m
     assert elapsed < 0.2 and started  # it returned at once; the sync ran afterwards
 
 
+def test_a_short_lived_command_waits_for_its_sync_before_exiting(small_db, monkeypatch):
+    """A CLI run (--once, approve.py) ends right after its last write; the
+    background sync must not be cut off with the process."""
+    monkeypatch.setenv("PM_SUPABASE_MIRROR", "1")
+    monkeypatch.setenv("SUPABASE_DB_URL", SECRET_URL)
+    finished = []
+
+    def slow(path, url, **kw):
+        time.sleep(0.3)
+        finished.append(True)
+
+    monkeypatch.setattr(supabase_mirror, "sync", slow)
+
+    mirror_if_enabled(small_db)
+    assert finished == []  # still running in the background
+    supabase_mirror._wait_at_exit()  # what the interpreter runs as the process ends
+
+    assert finished == [True]
+
+
+def test_the_exit_wait_is_registered_once(monkeypatch):
+    registered = []
+    monkeypatch.setattr(supabase_mirror.atexit, "register", lambda fn: registered.append(fn))
+    monkeypatch.setattr(supabase_mirror, "_atexit_registered", False)
+
+    supabase_mirror._run_in_background(lambda: None)
+    supabase_mirror._run_in_background(lambda: None)
+    supabase_mirror.wait_for_pending(timeout=2)
+
+    assert registered == [supabase_mirror._wait_at_exit]
+
+
 def test_a_burst_of_changes_is_coalesced_not_run_in_parallel(small_db, monkeypatch):
     monkeypatch.setenv("PM_SUPABASE_MIRROR", "1")
     monkeypatch.setenv("SUPABASE_DB_URL", SECRET_URL)
