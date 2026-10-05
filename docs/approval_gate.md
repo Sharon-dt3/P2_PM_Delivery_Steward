@@ -46,9 +46,10 @@ sends it. Off unless the switch is exactly `1`.
 
 | Surface | Status |
 |---|---|
-| `scripts/approve.py` (list / show / approve / reject / audit) | Real, tested |
+| `app/approval_dashboard.py` (Streamlit): pending briefs, edit, approve, reject, retry, audit | Real, tested headlessly with Streamlit's AppTest. Run: `uv run streamlit run app/approval_dashboard.py` |
+| `scripts/approve.py` (list / show / approve / reject / retry / audit) | Real, tested |
 | Adaptive Card JSON (`pm/approval/cards.py`) and its backend handler | Real, tested: the card's `Action.Submit` data is exactly the handler's request |
-| The Copilot Studio agent that renders the card in Teams | Not built: needs a Microsoft tenant. Same status as P1's CHN-25 |
+| The Copilot Studio agent that renders the card in Teams | Not built: needs a Microsoft tenant and credits, so the Streamlit dashboard is the working human surface, as in P1 |
 
 ## Card contract
 
@@ -60,3 +61,13 @@ sends it. Off unless the switch is exactly `1`.
   `{"proposal_id", "outcome": "sent" | "rejected" | "refused" | "send_failed", "detail"}`.
 * `handle_list_pending({})` → `{"approvals": [{…, "card": <Adaptive Card>}]}`.
 * `decision_card(trail)` — the card shown after a decision.
+
+## The Streamlit dashboard
+
+Thin on purpose: every button calls `pm.approval.service`, so it can do nothing the
+CLI and card cannot. Streamlit has no sign-in of its own, so you choose who you
+are from `PM_APPROVER_IDS` (the service still refuses anyone not on it; set
+`PM_DASHBOARD_USER` to preselect one). The audit trail is therefore only as
+trustworthy as that choice: for production, put the page behind company single
+sign-on. The sidebar shows what is switched on (publisher, auto-approve,
+approvers) and never the flow URL.

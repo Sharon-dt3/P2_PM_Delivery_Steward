@@ -27,7 +27,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 import time as _time
 from datetime import datetime, timezone
@@ -39,9 +38,8 @@ _P1_REPO_ROOT = _REPO_ROOT.parent / "P3_Agents"
 for _path in (_REPO_ROOT / "src", _P1_REPO_ROOT / "src", _REPO_ROOT / "packages" / "spine" / "src"):
     sys.path.insert(0, str(_path))
 
-from p1.adapters.teams_publisher_mock import LogPublisher
 
-from pm.adapters.teams import get_teams_publisher
+from pm.approval.settings import describe_settings
 from pm.jobs.morning_brief_job import run_morning_brief_job
 from pm.scheduling.config import (
     ProjectScheduleConfig,
@@ -69,27 +67,6 @@ def _gateway(kind: str):
     return LLMGateway()
 
 
-def _describe_settings() -> list[str]:
-    """What is switched on, in words, without printing any secret."""
-    try:
-        publisher = get_teams_publisher()
-        where = (
-            "log-only (nothing reaches Teams)" if isinstance(publisher, LogPublisher)
-            else "REAL: posts through the Power Automate flow"
-        )
-    except Exception as exc:  # noqa: BLE001 - misconfiguration is reported, not raised
-        where = f"NOT AVAILABLE ({type(exc).__name__}: {exc})"
-    auto = os.environ.get("PM_AUTO_APPROVE", "") == "1"
-    first = os.environ.get("PM_AUTO_APPROVE_REQUIRES_FIRST_HUMAN", "1") != "0"
-    approvers = [a.strip() for a in os.environ.get("PM_APPROVER_IDS", "").split(",") if a.strip()]
-    return [
-        f"publisher: {where}",
-        f"auto-approve: {'ON' if auto else 'off'}"
-        + (f" (a person must approve the first brief per channel: {'yes' if first else 'no'})" if auto else ""),
-        f"approvers: {', '.join(approvers) if approvers else 'none set (PM_APPROVER_IDS)'}",
-    ]
-
-
 def _print_schedule(scheduler, config: ProjectScheduleConfig) -> None:
     now = datetime.now(timezone.utc)
     print(f"Project {config.channel_id} ({config.timezone}); working days: {', '.join(config.working_days)}")
@@ -98,7 +75,7 @@ def _print_schedule(scheduler, config: ProjectScheduleConfig) -> None:
         at = config.morning_brief_time if kind == "morning_brief" else config.end_of_day_time
         nxt = job.trigger.get_next_fire_time(None, now)
         print(f"  {kind:14} at {at.strftime('%H:%M')} {config.timezone}  next: {nxt.isoformat() if nxt else 'never'}")
-    for line in _describe_settings():
+    for line in describe_settings():
         print(f"  {line}")
 
 

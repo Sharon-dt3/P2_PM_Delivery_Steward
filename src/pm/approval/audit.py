@@ -134,3 +134,39 @@ def describe(trail: AuditTrail) -> str:
     if trail.edited:
         lines += ["", "What was applied (edited):", trail.final_proposal.get("content", "")]
     return "\n".join(lines)
+
+
+@dataclass(frozen=True)
+class ProposalRow:
+    proposal_id: str
+    status: str
+    created_at: str
+    local_date: str
+    target_channel: str
+    approver_id: str | None
+    decided_at: str | None
+
+
+def recent_proposals(*, limit: int = 20, db_path: str | Path = DEFAULT_DB_PATH) -> list[ProposalRow]:
+    """The latest proposals in any status, newest first -- what an audit view lists."""
+    conn = get_connection(db_path)
+    try:
+        rows = _rows(
+            conn,
+            "SELECT id, status, created_at, payload, approver_id, decided_at FROM proposals "
+            "ORDER BY created_at DESC, rowid DESC LIMIT ?",
+            limit,
+        )
+    finally:
+        conn.close()
+    out = []
+    for row in rows:
+        payload = json.loads(row["payload"])
+        out.append(
+            ProposalRow(
+                proposal_id=row["id"], status=row["status"], created_at=row["created_at"],
+                local_date=payload.get("local_date", "?"), target_channel=payload.get("target_channel", "?"),
+                approver_id=row["approver_id"], decided_at=row["decided_at"],
+            )
+        )
+    return out
