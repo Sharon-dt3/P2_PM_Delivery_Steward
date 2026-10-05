@@ -143,7 +143,7 @@ def test_regenerating_the_same_facts_yields_identical_facts_but_content_may_diff
     def responses_reworded():
         return [
             _lines_response(("It's day 10 of 14 in Sprint 13; 4 of 13 items are done.", "sprint:sprint-13")),
-            _lines_response(("wei.chen remains stuck on PM-023.", "item:PM-023")),
+            _lines_response(("wei.chen remains blocked on PM-023.", "item:PM-023")),
             _lines_response(("Medium-severity RISK-001 is still open, linked to PM-023.", "risk:RISK-001")),
         ]
 

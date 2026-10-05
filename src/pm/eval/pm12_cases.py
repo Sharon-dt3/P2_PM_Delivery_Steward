@@ -54,6 +54,7 @@ from pm.reporting.facts import (
     compute_morning_brief_facts,
 )
 from pm.reporting.morning_brief import (
+    _AS_RECORDED,
     _NO_ACTIVITY_LINE,
     _SECTION_LABELS,
     SECTION_ORDER,
@@ -226,6 +227,30 @@ def _person_refs(person: PersonFacts) -> dict[str, set[str]]:
     }
 
 
+def _bucket_problem(rendered: str | None, grounded: list[str], refs: set[str], assignee: str) -> str | None:
+    """Independent check of one rendered bucket: grounded lines appear as
+    written; anything else is a fact shown as recorded (marked, naming this
+    person); "none." only when the bucket truly has no facts."""
+    if rendered is None:
+        return "is missing"
+    if not refs:
+        return None if rendered == "none." else f"should be 'none.' but is {rendered!r}"
+    if rendered == "none.":
+        return "says 'none.' although it has facts"
+    rest = rendered
+    for text in grounded:
+        if text not in rest:
+            return f"lost a grounded line {text!r}"
+        rest = rest.replace(text, "", 1)
+    *marked, tail = rest.split(_AS_RECORDED)
+    if tail.strip() or (not marked and not grounded):
+        return f"has text that is neither a grounded line nor a marked fact: {rest.strip()!r}"
+    for segment in marked:
+        if assignee not in segment:
+            return f"has a marked fact that does not name {assignee}: {segment.strip()!r}"
+    return None
+
+
 def _person_block(content: str, assignee_id: str) -> list[str]:
     lines = content.split("\n")
     header = f"## {assignee_id}"
@@ -262,14 +287,12 @@ def count_fabrications(brief: MorningBrief, facts: MorningBriefFacts) -> list[st
             ("Pending", "pending"),
             ("Blocked", "blocked"),
         ):
-            expected = " ".join(
-                line.text for line in brief.sections[key] if line.message_id in refs[key]
-            )
             prefix = f"- {label}: "
             rendered = next((b[len(prefix):] for b in block if b.startswith(prefix)), None)
-            want = expected if expected else "none."
-            if rendered is None or sorted(rendered.split()) != sorted(want.split()):
-                problems.append(f"{person.assignee_id}: {label} bucket text does not match its own lines")
+            grounded = [line.text for line in brief.sections[key] if line.message_id in refs[key]]
+            problem = _bucket_problem(rendered, grounded, refs[key], person.assignee_id)
+            if problem:
+                problems.append(f"{person.assignee_id}: {label} bucket {problem}")
 
     blocker_texts = {line.text for line in brief.sections["blockers"]}
     in_blockers = False
@@ -281,8 +304,14 @@ def count_fabrications(brief: MorningBrief, facts: MorningBriefFacts) -> list[st
             and rendered_line.startswith("- ")
             and rendered_line != "- none."
             and rendered_line[2:] not in blocker_texts
+            and not (
+                rendered_line.endswith(_AS_RECORDED)
+                and any(b.risk_id in rendered_line for b in facts.blockers)
+            )
         ):
-            problems.append("blockers: rendered line is not one of the grounded blocker lines")
+            problems.append("blockers: rendered line is neither a grounded blocker line nor a marked fact")
+    if facts.blockers and "- none." in brief.content.split("## Blockers")[1]:
+        problems.append("blockers: rendered 'none.' although blockers exist")
     return problems
 
 

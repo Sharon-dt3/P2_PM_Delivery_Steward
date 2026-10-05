@@ -101,6 +101,11 @@ _SECTION_LABELS = {
 # built up from parts, exactly like P1's own PARTICIPATION_WORDING.
 _NO_ACTIVITY_LINE = "No update: no tracker activity or commits recorded."
 
+# Appended to a fact shown as the fact itself because its generated line was
+# dropped for good: the reader sees the recorded fact, flagged as not phrased
+# by the model, never a false "none.".
+_AS_RECORDED = "[as recorded]"
+
 ReferenceLookup = Callable[[str], str | None]
 
 MIN_QUOTE_CHARS = 8
@@ -118,20 +123,69 @@ def _specifics(text: str) -> tuple[dict[str, str], dict[float, str]]:
     return ids, numbers
 
 
+_WORD_RE = re.compile(r"[A-Za-z]+")
+
+# Plain connecting and status words a faithful line may use without the fact
+# containing them. Deliberately short and conservative: anything that asserts
+# something (an outcome, a manner, a person or party, a speed) is NOT here.
+_ALLOWED_WORDS = frozenset(
+    ["the", "and", "but", "or", "nor", "of", "to", "in", "on", "at", "for", "by", "with", "from", "as", "into", "onto", "over", "about", "is", "are", "was", "were", "be", "been", "being", "am", "has", "have", "had", "having", "do", "does", "did", "it", "its", "this", "that", "these", "those", "there", "here", "their", "his", "her", "they", "them", "he", "she", "who", "which", "then", "than", "also", "not", "no", "yes", "only", "just", "still", "yet", "already", "now", "today", "yesterday", "deliver", "delivered", "complete", "completed", "finish", "finished", "done", "ship", "shipped", "shipping", "commit", "committed", "pending", "open", "blocked", "block", "waiting", "item", "items", "sprint", "day", "days", "due", "date", "scope", "risk", "severity", "blocker", "blockers", "assignee", "run", "runs", "running", "start", "starts", "started", "end", "ends", "ended", "january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december", "through", "until", "before", "after", "during", "within", "up", "out", "off", "all", "both", "each", "one", "two", "remains", "remain", "remaining", "left", "ready", "linked", "tied", "related", "relates"]
+)
+
+
+def _stem(word: str) -> str:
+    """Crude suffix-stripping so inflections of a word the fact already uses
+    (ship / shipping / shipped, page / pages) count as the same word."""
+    w = word.lower()
+    for suffix in ("ing", "ed", "es", "s"):
+        if w.endswith(suffix) and len(w) - len(suffix) >= 3:
+            w = w[: -len(suffix)]
+            break
+    if w.endswith("e") and len(w) > 3:
+        w = w[:-1]
+    if len(w) > 3 and w[-1] == w[-2] and w[-1] not in "aeiou":
+        w = w[:-1]
+    return w
+
+
+_ALLOWED_STEMS = frozenset(_stem(w) for w in _ALLOWED_WORDS)
+
+
+def _words(text: str) -> list[str]:
+    return _WORD_RE.findall(_ID_RE.sub(" ", text))
+
+
+def _unsupported_words(text: str, source: str) -> list[str]:
+    """Content words in `text` that neither appear in `source` (compared by
+    stem) nor are plain connecting/status words. In order, deduplicated, in
+    the form the line wrote them."""
+    known = {_stem(w) for w in _words(source)} | _ALLOWED_STEMS
+    found: dict[str, str] = {}
+    for word in _words(text):
+        if len(word) <= 2:
+            continue
+        if _stem(word) not in known:
+            found.setdefault(word.lower(), word)
+    return list(found.values())
+
+
 def _check_line_content(line: FactualLine, source: str) -> str | None:
-    """Layer two of the wording checks (layer one is the kernel's own
-    verbatim-quote verification, which runs before this). Returns why a line
-    that cites a real fact still is not supported by it, or None.
+    """Layers two and three of the wording checks (layer one is the kernel's
+    own verbatim-quote verification, which runs before this). Returns why a
+    line that cites a real fact still is not supported by it, or None.
 
     - it must carry a quote of at least MIN_QUOTE_CHARS characters, so a
       line is anchored to specific words of its source (the kernel then
       verifies that quote is literally in the source);
     - every item/risk id and every number in its text must also appear in
       the source: the model may not introduce a name, count or date the fact
-      does not contain.
+      does not contain;
+    - every other content word must be one of the fact's own words (by stem)
+      or a plain connecting/status word, so "...and got praise from the
+      client" is caught even though it has no id or number.
 
-    It cannot catch plain-word embellishment around a valid quote -- see
-    tests/unit/test_brief_wording_grounding.py, which pins that limit."""
+    Still unable to catch: a rearrangement of the fact's own words that
+    changes what they mean, or a synonym on the allowlist used wrongly."""
     if len((line.quote or "").strip()) < MIN_QUOTE_CHARS:
         return (
             f"line must include a `quote`: an exact fragment of at least {MIN_QUOTE_CHARS} "
@@ -143,6 +197,12 @@ def _check_line_content(line: FactualLine, source: str) -> str | None:
     extra += [form for value, form in line_numbers.items() if value not in source_numbers]
     if extra:
         return f"line mentions {', '.join(extra)}, which does not appear in the fact it cites"
+    words = _unsupported_words(line.text, source)
+    if words:
+        return (
+            f"line uses words that are not in the fact it cites: {', '.join(words)}. "
+            "Say only what the fact says, using its own words"
+        )
     return None
 
 
@@ -341,13 +401,24 @@ def _order_key(section_key: str, facts: MorningBriefFacts) -> Callable[[FactualL
 
 def _render_brief(facts: MorningBriefFacts, sections: dict[str, list[FactualLine]]) -> str:
     """Deterministic assembly of the grounded lines into the final brief
-    text -- no model call happens here. A bucket that ends up empty
-    (because it had no facts, or every line in it was dropped) is
-    rendered as an honest, explicit statement, never silently omitted."""
+    text -- no model call happens here. A fact whose line was dropped for
+    good is shown as the recorded fact itself, marked _AS_RECORDED; "none."
+    and "no sprint on file" appear only when there truly is nothing, never as
+    a stand-in for a dropped line."""
     parts: list[str] = []
+    section_facts = _section_facts(facts)
+
+    def recorded(section_key: str, ref: str) -> str:
+        detail = next(f.detail for f in section_facts[section_key] if f.reference_id == ref)
+        return f"{detail} {_AS_RECORDED}"
 
     scope_lines = sections["sprint_scope"]
-    parts.append(scope_lines[0].text if scope_lines else "Sprint scope: no sprint on file covers this date.")
+    if scope_lines:
+        parts.append(scope_lines[0].text)
+    elif section_facts["sprint_scope"]:
+        parts.append(recorded("sprint_scope", section_facts["sprint_scope"][0].reference_id))
+    else:
+        parts.append("Sprint scope: no sprint on file covers this date.")
     parts.append("")
 
     # Keyed by (section, ref), never ref alone: one item can be both a
@@ -358,6 +429,13 @@ def _render_brief(facts: MorningBriefFacts, sections: dict[str, list[FactualLine
         for line in sections[key]:
             if line.message_id:
                 texts_by_section_ref.setdefault((key, line.message_id), []).append(line.text)
+
+    # A person's detail text names them ("aisha.rahman: PM-001 (...)"), so a
+    # fallback is looked up by (section, ref, assignee) from the detail lines.
+    details_by_section_ref: dict[tuple[str, str], list[str]] = {}
+    for key in ("committed", "delivered", "pending", "blocked"):
+        for fact in section_facts[key]:
+            details_by_section_ref.setdefault((key, fact.reference_id), []).append(fact.detail)
 
     for person in facts.people:
         parts.append(f"## {person.assignee_id}")
@@ -386,18 +464,29 @@ def _render_brief(facts: MorningBriefFacts, sections: dict[str, list[FactualLine
             ("Pending", "pending", pending_refs),
             ("Blocked", "blocked", blocked_refs),
         ):
-            lines = [text for ref in refs for text in texts_by_section_ref.get((section_key, ref), [])]
-            if lines:
-                parts.append(f"- {label}: " + " ".join(lines))
-            else:
-                parts.append(f"- {label}: none.")
+            lines: list[str] = []
+            for ref in refs:
+                grounded = texts_by_section_ref.get((section_key, ref))
+                if grounded:
+                    lines.extend(grounded)
+                else:
+                    owned = [
+                        d for d in details_by_section_ref.get((section_key, ref), [])
+                        if d.startswith(person.assignee_id)
+                    ]
+                    lines.extend(f"{d} {_AS_RECORDED}" for d in owned)
+            parts.append(f"- {label}: " + " ".join(lines) if lines else f"- {label}: none.")
         parts.append("")
 
     parts.append("## Blockers")
     blocker_lines = sorted(sections["blockers"], key=_order_key("blockers", facts))
-    if blocker_lines:
+    grounded_refs = {line.message_id for line in blocker_lines}
+    if blocker_lines or section_facts["blockers"]:
         for line in blocker_lines:
             parts.append(f"- {line.text}")
+        for fact in section_facts["blockers"]:  # facts.blockers' own severity order
+            if fact.reference_id not in grounded_refs:
+                parts.append(f"- {fact.detail} {_AS_RECORDED}")
     else:
         parts.append("- none.")
 

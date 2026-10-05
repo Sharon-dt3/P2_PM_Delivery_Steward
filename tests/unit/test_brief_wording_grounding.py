@@ -154,11 +154,49 @@ def test_an_honest_paraphrase_with_no_new_specifics_passes():
     assert len(brief.sections["delivered"]) == 1
 
 
-def test_known_limit_embellishment_in_plain_words_around_a_valid_quote_still_passes():
-    """Pinned on purpose. With no id or number to compare, a claim such as
-    "got praise from the client" cannot be caught by these two checks. If a
-    stricter check is ever added, this test is the one to change."""
-    brief = generate_morning_brief(
-        _facts(), QueuedGateway([[_line("Aisha delivered the login page and got praise from the client.")]])
-    )
-    assert len(brief.sections["delivered"]) == 1
+def test_embellishment_in_plain_words_is_rejected_and_the_words_are_fed_back():
+    """The gap the first two checks left: no id and no number to compare, just
+    ordinary words the fact never said. A third check compares the line's
+    content words with the fact's own words plus a short list of plain
+    connecting and status words."""
+    embellished = _line("Aisha delivered the login page and got praise from the client.")
+    gateway = QueuedGateway([[embellished], [FAITHFUL]])
+
+    brief = generate_morning_brief(_facts(), gateway)
+
+    assert [line.text for line in brief.sections["delivered"]] == ["Aisha delivered the login page."]
+    assert "praise" in gateway.prompts[1] and "client" in gateway.prompts[1]
+
+
+def test_embellishment_that_never_goes_away_is_dropped_with_the_words_named(caplog):
+    embellished = _line("Aisha delivered the login page and got praise from the client.")
+
+    with caplog.at_level(logging.WARNING, logger="spine.grounding.kernel"):
+        brief = generate_morning_brief(_facts(), QueuedGateway([[embellished]] * 3))
+
+    (failure,) = brief.dropped["delivered"]
+    assert failure["reason"] == "content_not_supported"
+    assert "praise" in failure["detail"] and "client" in failure["detail"]
+    assert any("grounding_dropped" in r.message for r in caplog.records)
+
+
+def test_plain_paraphrase_and_inflections_of_the_facts_own_words_pass():
+    for text in (
+        "Aisha has completed the login page.",
+        "The login page is done.",
+        "Aisha finished shipping the login page.",  # "shipping" inflects the title's own "Ship"
+        "aisha.rahman delivered PM-001, the login page.",
+    ):
+        brief = generate_morning_brief(_facts(), QueuedGateway([[_line(text)]]))
+        assert len(brief.sections["delivered"]) == 1, text
+
+
+def test_words_that_assert_something_the_fact_does_not_say_are_rejected():
+    for text in (
+        "Aisha released the login page.",
+        "Aisha successfully delivered the login page.",
+        "Aisha delivered the login page early.",
+    ):
+        brief = generate_morning_brief(_facts(), QueuedGateway([[_line(text)]] * 3))
+        assert brief.sections["delivered"] == [], text
+        assert brief.dropped["delivered"][0]["reason"] == "content_not_supported", text
