@@ -280,6 +280,11 @@ def count_fabrications(brief: MorningBrief, facts: MorningBriefFacts) -> list[st
             if block != [f"- {_NO_ACTIVITY_LINE}"]:
                 problems.append(f"{person.assignee_id}: zero-activity person rendered as {block!r}")
             continue
+        if not any(_person_refs(person).values()):
+            want = [f"- Commits: {person.commit_count} recorded; no tracker items."]
+            if block != want:
+                problems.append(f"{person.assignee_id}: commit-only person rendered as {block!r}, want {want!r}")
+            continue
         refs = _person_refs(person)
         for label, key in (
             ("Committed", "committed"),

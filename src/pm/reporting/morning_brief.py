@@ -59,7 +59,9 @@ absence can never be embellished with an inferred reason the way P1's
 own PARTICIPATION_WORDING never is either. Row-level acceptance test,
 literal: "The zero-activity assignee appears with an explicit no-update
 line." Proven in tests/unit/test_reporting_morning_brief.py against a
-person with every bucket and commit_count empty, and in
+person with every bucket and commit_count empty (a person whose only
+activity is commits gets one fixed "Commits: N recorded; no tracker items."
+line instead -- see _commits_only_line), and in
 tests/unit/test_reporting_facts.py and test_state_snapshot.py against
 this repo's own real seeded roster, which PM-10 gives a seventh,
 deliberately silent member for exactly this purpose (see
@@ -100,6 +102,15 @@ _SECTION_LABELS = {
 # this module's own docstring for why it is a literal constant, never
 # built up from parts, exactly like P1's own PARTICIPATION_WORDING.
 _NO_ACTIVITY_LINE = "No update: no tracker activity or commits recorded."
+
+
+
+def _commits_only_line(commit_count: int) -> str:
+    """PM-10: someone whose only activity is commits (no tracker items) is
+    shown the commit count -- a fact computed in code -- rather than four
+    "none."s that would hide it. A template, never model prose."""
+    return f"Commits: {commit_count} recorded; no tracker items."
+
 
 # Appended to a fact shown as the fact itself because its generated line was
 # dropped for good: the reader sees the recorded fact, flagged as not phrased
@@ -445,6 +456,12 @@ def _render_brief(facts: MorningBriefFacts, sections: dict[str, list[FactualLine
             # explicit line, not four repeated "none."s -- see this
             # module's own docstring.
             parts.append(f"- {_NO_ACTIVITY_LINE}")
+            parts.append("")
+            continue
+
+        if not (person.committed or person.delivered or person.pending or person.blocked):
+            # has_activity is true, so the only activity is commits.
+            parts.append(f"- {_commits_only_line(person.commit_count)}")
             parts.append("")
             continue
 
