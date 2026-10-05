@@ -42,10 +42,10 @@ commitment, so a person who owned neither -- a real possibility, not a
 hypothetical -- was silently absent from `people` altogether, not merely
 shown with empty buckets. The base set is now snapshot.roster itself
 (every person PM-10's row says must be accounted for), unioned
-defensively with any id observed on an item/commitment that isn't on the
-roster (so a data gap in the roster can never make this module drop real
-activity, mirroring P1's own participation ledger only ever narrowing
-roster - contributors, never inventing membership). commit_count is new
+defensively with any id observed on an item, commitment or commit that
+isn't on the roster (so a data gap in the roster can never make this module
+drop real activity, mirroring P1's own participation ledger only ever
+narrowing roster - contributors, never inventing membership). commit_count is new
 too -- snapshot.commits carries activity no item or commitment bucket
 would otherwise surface (the row's own "tracker AND commit activity") --
 and PersonFacts.has_activity (a plain property, not a stored field, so it
@@ -141,7 +141,7 @@ def _resolve_sprint_scope(snapshot: ProjectSnapshot, as_of_date: str) -> SprintS
 def _compute_person_facts(snapshot: ProjectSnapshot) -> list[PersonFacts]:
     # The roster is the base set (PM-10): every person snapshot.roster
     # names gets a PersonFacts entry, whether or not they own a single
-    # item, commitment or commit. Ids observed on an item/commitment but
+    # item, commitment or commit. Ids observed on an item/commitment/commit but
     # missing from the roster are unioned in defensively -- a gap in the
     # roster must never cause this function to drop real, already-known
     # activity; it should only ever ADD zero-activity people, never
@@ -150,6 +150,7 @@ def _compute_person_facts(snapshot: ProjectSnapshot) -> list[PersonFacts]:
     assignee_ids = {assignee.id for assignee in snapshot.roster}
     assignee_ids |= {item.assignee_id for item in snapshot.items if item.assignee_id is not None}
     assignee_ids |= {commitment.member_id for commitment in snapshot.commitments}
+    assignee_ids |= {commit.author_id for commit in snapshot.commits}
 
     people: list[PersonFacts] = []
     for assignee_id in sorted(assignee_ids):
