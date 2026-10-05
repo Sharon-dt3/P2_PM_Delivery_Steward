@@ -305,7 +305,7 @@ def _committed_facts(facts: MorningBriefFacts) -> list[_FactLine]:
             out.append(
                 _FactLine(
                     reference_id=ref,
-                    detail=f'{person.assignee_id} committed: "{commitment.text}" (due {due}).',
+                    detail=f'{person.name} committed: "{commitment.text}" (due {due}).',
                 )
             )
     return out
@@ -318,7 +318,7 @@ def _item_bucket_facts(facts: MorningBriefFacts, bucket_name: str) -> list[_Fact
             out.append(
                 _FactLine(
                     reference_id=_reference("item", item.item_id),
-                    detail=f"{person.assignee_id}: {item.item_id} ({item.title}).",
+                    detail=f"{person.name}: {item.item_id} ({item.title}).",
                 )
             )
     return out
@@ -332,7 +332,7 @@ def _blocker_facts(facts: MorningBriefFacts) -> list[_FactLine]:
                 reference_id=_reference("risk", blocker.risk_id),
                 detail=(
                     f"[{blocker.severity}] {blocker.risk_id}: {blocker.title} "
-                    f"(item {blocker.related_item_id or 'none'}, assignee {blocker.assignee_id or 'unassigned'})."
+                    f"(item {blocker.related_item_id or 'none'}, assignee {blocker.assignee_name or blocker.assignee_id or 'unassigned'})."
                 ),
             )
         )
@@ -449,7 +449,7 @@ def _render_brief(facts: MorningBriefFacts, sections: dict[str, list[FactualLine
             details_by_section_ref.setdefault((key, fact.reference_id), []).append(fact.detail)
 
     for person in facts.people:
-        parts.append(f"## {person.assignee_id}")
+        parts.append(f"## {person.name}")
 
         if not person.has_activity:
             # PM-10: a genuinely zero-activity person gets exactly one
@@ -489,7 +489,7 @@ def _render_brief(facts: MorningBriefFacts, sections: dict[str, list[FactualLine
                 else:
                     owned = [
                         d for d in details_by_section_ref.get((section_key, ref), [])
-                        if d.startswith(person.assignee_id)
+                        if d.startswith(person.name)
                     ]
                     lines.extend(f"{d} {_AS_RECORDED}" for d in owned)
             parts.append(f"- {label}: " + " ".join(lines) if lines else f"- {label}: none.")

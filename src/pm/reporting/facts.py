@@ -75,11 +75,18 @@ class ItemFact(BaseModel):
 
 class PersonFacts(BaseModel):
     assignee_id: str
+    display_name: str | None = None  # from the tracker's roster; None when it has none for this id
     committed: list[Commitment]
     delivered: list[ItemFact]
     pending: list[ItemFact]
     blocked: list[ItemFact]
     commit_count: int = 0  # commits authored in snapshot.commits, regardless of item_ref (PM-10)
+
+    @property
+    def name(self) -> str:
+        """What the brief calls this person: their name, or their id if no name
+        is known. The id is still what grounding and the audit trail use."""
+        return self.display_name or self.assignee_id
 
     @property
     def has_activity(self) -> bool:
@@ -99,6 +106,7 @@ class BlockerFact(BaseModel):
     severity: str  # low | medium | high
     related_item_id: str | None = None
     assignee_id: str | None = None  # resolved from related_item_id, when it names a real item
+    assignee_name: str | None = None  # that person's name, when the roster has one
 
 
 class SprintScopeFacts(BaseModel):
@@ -159,7 +167,22 @@ def _commits_by_person(snapshot: ProjectSnapshot) -> tuple[dict[str, int], int]:
     return counts, automated
 
 
-def _compute_person_facts(snapshot: ProjectSnapshot, commit_counts: dict[str, int]) -> list[PersonFacts]:
+def _person_names(snapshot: ProjectSnapshot) -> dict[str, str]:
+    """Roster names by id. Two people with the same name are told apart by
+    adding their id ("Sam Lee (sam.one)") so a heading is never ambiguous."""
+    by_name: dict[str, list[str]] = {}
+    for assignee in snapshot.roster:
+        by_name.setdefault(assignee.display_name, []).append(assignee.id)
+    return {
+        assignee.id: assignee.display_name if len(by_name[assignee.display_name]) == 1
+        else f"{assignee.display_name} ({assignee.id})"
+        for assignee in snapshot.roster
+    }
+
+
+def _compute_person_facts(
+    snapshot: ProjectSnapshot, commit_counts: dict[str, int], names: dict[str, str]
+) -> list[PersonFacts]:
     # The roster is the base set (PM-10): every person snapshot.roster
     # names gets a PersonFacts entry, whether or not they own a single
     # item, commitment or commit. Ids observed on an item/commitment/commit but
@@ -200,6 +223,7 @@ def _compute_person_facts(snapshot: ProjectSnapshot, commit_counts: dict[str, in
         people.append(
             PersonFacts(
                 assignee_id=assignee_id,
+                display_name=names.get(assignee_id),
                 committed=their_commitments,
                 delivered=delivered,
                 pending=pending,
@@ -210,7 +234,7 @@ def _compute_person_facts(snapshot: ProjectSnapshot, commit_counts: dict[str, in
     return people
 
 
-def _compute_blocker_facts(snapshot: ProjectSnapshot) -> list[BlockerFact]:
+def _compute_blocker_facts(snapshot: ProjectSnapshot, names: dict[str, str]) -> list[BlockerFact]:
     items_by_id = {item.id: item for item in snapshot.items}
     open_risks = [risk for risk in snapshot.risks if risk.status == "open"]
 
@@ -224,6 +248,7 @@ def _compute_blocker_facts(snapshot: ProjectSnapshot) -> list[BlockerFact]:
                 severity=risk.severity,
                 related_item_id=risk.related_item_id,
                 assignee_id=related_item.assignee_id if related_item is not None else None,
+                assignee_name=names.get(related_item.assignee_id) if related_item is not None else None,
             )
         )
     blockers.sort(key=lambda blocker: (_SEVERITY_RANK.get(blocker.severity, len(_SEVERITY_RANK)), blocker.risk_id))
@@ -240,10 +265,11 @@ def compute_morning_brief_facts(snapshot: ProjectSnapshot) -> MorningBriefFacts:
     # dates, and the UTC date of taken_at is a different day for a team far from UTC.
     as_of_date = parse_moment(snapshot.taken_at).astimezone(ZoneInfo(snapshot.timezone)).date().isoformat()
     commit_counts, automated = _commits_by_person(snapshot)
+    names = _person_names(snapshot)
     return MorningBriefFacts(
         as_of=snapshot.taken_at,
         sprint=_resolve_sprint_scope(snapshot, as_of_date),
-        people=_compute_person_facts(snapshot, commit_counts),
-        blockers=_compute_blocker_facts(snapshot),
+        people=_compute_person_facts(snapshot, commit_counts, names),
+        blockers=_compute_blocker_facts(snapshot, names),
         automated_commit_count=automated,
     )

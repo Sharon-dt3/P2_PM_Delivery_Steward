@@ -360,7 +360,7 @@ def count_fabrications(brief: MorningBrief, facts: MorningBriefFacts) -> list[st
             problems += [f"{key}: {p} ({line.message_id})" for p in best]
 
     for person in facts.people:
-        block = _person_block(brief.content, person.assignee_id)
+        block = _person_block(brief.content, person.name)
         if not person.has_activity:
             if block != [f"- {_NO_ACTIVITY_LINE}"]:
                 problems.append(f"{person.assignee_id}: zero-activity person rendered as {block!r}")
@@ -380,7 +380,7 @@ def count_fabrications(brief: MorningBrief, facts: MorningBriefFacts) -> list[st
             prefix = f"- {label}: "
             rendered = next((b[len(prefix):] for b in block if b.startswith(prefix)), None)
             grounded = [line.text for line in brief.sections[key] if line.message_id in refs[key]]
-            problem = _bucket_problem(rendered, grounded, refs[key], person.assignee_id)
+            problem = _bucket_problem(rendered, grounded, refs[key], person.name)
             if problem:
                 problems.append(f"{person.assignee_id}: {label} bucket {problem}")
 

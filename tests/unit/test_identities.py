@@ -186,7 +186,7 @@ def test_on_the_seed_a_commit_only_teammate_shows_their_commits(seeded_db_path):
     facts = compute_morning_brief_facts(_seeded_snapshot(seeded_db_path, IDENTITIES))
     brief = generate_morning_brief(facts, ScriptedGateway())
 
-    assert _person_block(brief.content, "kofi.mensah") == ["- Commits: 2 recorded; no tracker items."]
+    assert _person_block(brief.content, "Kofi Mensah") == ["- Commits: 2 recorded; no tracker items."]
     assert count_fabrications(brief, facts) == []
 
 
