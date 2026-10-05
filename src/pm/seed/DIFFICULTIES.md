@@ -42,7 +42,15 @@ in `build.py`).
   the anchor), despite her last touching her assigned item **PM-017** with a
   comment on 2026-09-15, and having earlier activity on other items before
   that.
-- Proven by: `test_difficulty_3_assignee_has_a_two_day_activity_gap_before_anchor`.
+- Unique on purpose: every other roster member with any history (noah.becker,
+  wei.chen, mateo.silva, olivia.dupont, olivia.dupree) has activity on 2026-09-16
+  or 2026-09-17. The only other member with nothing on those days is
+  **sofia.lindqvist**, who has no activity at all -- PM-10's separate planted
+  case, not one of these ten -- so a "no activity on 09-16/17" detector returns
+  exactly {aisha.rahman, sofia.lindqvist}, and aisha.rahman is the only one of
+  the two who had any activity before.
+- Proven by: `test_difficulty_3_assignee_has_a_two_day_activity_gap_before_anchor`,
+  `test_difficulty_3_aisha_is_the_only_member_with_prior_activity_who_goes_quiet`.
 
 ## 4. An unassigned item
 
@@ -60,7 +68,11 @@ in `build.py`).
 - **PM-019** (`created_at=2026-09-12`) and **PM-020** (`created_at=2026-09-15`)
   -- both in `sprint-13` (`start_date=2026-09-07`), both created more than 3
   days after the sprint started, unlike every other Sprint 13 item.
-- Proven by: `test_difficulty_5_two_items_were_added_mid_sprint`.
+- Unique across the whole seed, not just Sprint 13: every other item, in either
+  sprint, was created within 2 days of its own sprint's start (Sprint 12's
+  items all sit between 2026-08-24 and 2026-08-26).
+- Proven by: `test_difficulty_5_two_items_were_added_mid_sprint`,
+  `test_difficulty_5_no_other_item_in_any_sprint_was_added_mid_sprint`.
 
 ## 6. A commit with no item reference
 

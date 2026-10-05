@@ -113,12 +113,12 @@ ITEMS = [
     {"id": "PM-004", "title": "Scaffold onboarding wizard steps", "status": "done", "sprint_id": "sprint-12", "assignee_id": "noah.becker", "created_at": "2026-08-25"},
     {"id": "PM-005", "title": "Build reporting dashboard v1", "status": "done", "sprint_id": "sprint-12", "assignee_id": "mateo.silva", "created_at": "2026-08-26"},
     {"id": "PM-006", "title": "Implement search index base schema", "status": "done", "sprint_id": "sprint-12", "assignee_id": "olivia.dupree", "created_at": "2026-08-26"},
-    {"id": "PM-007", "title": "Build retry queue worker", "status": "done", "sprint_id": "sprint-12", "assignee_id": "noah.becker", "created_at": "2026-08-27"},
-    {"id": "PM-008", "title": "Build export job pipeline v1", "status": "done", "sprint_id": "sprint-12", "assignee_id": "mateo.silva", "created_at": "2026-08-28"},
-    {"id": "PM-009", "title": "Write onboarding wizard integration tests", "status": "done", "sprint_id": "sprint-12", "assignee_id": "aisha.rahman", "created_at": "2026-08-29"},
-    {"id": "PM-010", "title": "Add billing sync monitoring dashboard", "status": "done", "sprint_id": "sprint-12", "assignee_id": "olivia.dupont", "created_at": "2026-08-31"},
-    {"id": "PM-011", "title": "Document auth flow token lifecycle", "status": "done", "sprint_id": "sprint-12", "assignee_id": "aisha.rahman", "created_at": "2026-09-01"},
-    {"id": "PM-012", "title": "Clean up reporting dashboard legacy queries", "status": "done", "sprint_id": "sprint-12", "assignee_id": "wei.chen", "created_at": "2026-09-02"},
+    {"id": "PM-007", "title": "Build retry queue worker", "status": "done", "sprint_id": "sprint-12", "assignee_id": "noah.becker", "created_at": "2026-08-26"},
+    {"id": "PM-008", "title": "Build export job pipeline v1", "status": "done", "sprint_id": "sprint-12", "assignee_id": "mateo.silva", "created_at": "2026-08-26"},
+    {"id": "PM-009", "title": "Write onboarding wizard integration tests", "status": "done", "sprint_id": "sprint-12", "assignee_id": "aisha.rahman", "created_at": "2026-08-26"},
+    {"id": "PM-010", "title": "Add billing sync monitoring dashboard", "status": "done", "sprint_id": "sprint-12", "assignee_id": "olivia.dupont", "created_at": "2026-08-25"},
+    {"id": "PM-011", "title": "Document auth flow token lifecycle", "status": "done", "sprint_id": "sprint-12", "assignee_id": "aisha.rahman", "created_at": "2026-08-26"},
+    {"id": "PM-012", "title": "Clean up reporting dashboard legacy queries", "status": "done", "sprint_id": "sprint-12", "assignee_id": "wei.chen", "created_at": "2026-08-25"},
     # Not one of PM-03's ten -- an ordinary descope, so Sprint 12 reads
     # like a real closed sprint (not everything planned ships).
     {"id": "PM-013", "title": "Prototype export job streaming mode", "status": "backlog", "sprint_id": "sprint-12", "assignee_id": "mateo.silva", "created_at": "2026-08-24"},
@@ -235,10 +235,18 @@ ITEM_COMMENTS = [
     # Difficulty 3/10's last-touch evidence: aisha.rahman was active on
     # PM-017 on 2026-09-15, then goes quiet for the two days before
     # ANCHOR_DATE (2026-09-16, 2026-09-17) -- see this module's own
-    # header note on PM-017.
+    # header note on PM-017. She must be the ONLY member with prior
+    # activity who goes quiet then, so the three comments at the bottom of
+    # this list give noah.becker and both Olivias something on those days
+    # (comments are never read by the snapshot or diff, so golden case 3
+    # is unaffected). sofia.lindqvist is the other member with nothing on
+    # those days: she has no activity at all, PM-10's own separate case.
     {"item_id": "PM-017", "author_id": "aisha.rahman", "body": "Started reviewing copy, about halfway through.", "tags": [], "created_at": "2026-09-15"},
     {"item_id": "PM-014", "author_id": "olivia.dupree", "body": "Blocked -- staging DB migration hasn't run yet, filed with infra.", "tags": ["blocked-reason"], "created_at": "2026-09-14"},
     {"item_id": "PM-023", "author_id": "wei.chen", "body": "Blocked -- token refresh intermittently failing in staging, investigating.", "tags": ["blocked-reason"], "created_at": "2026-09-10"},
+    {"item_id": "PM-025", "author_id": "noah.becker", "body": "Picked this up, reading through the existing retry design before starting.", "tags": [], "created_at": "2026-09-16"},
+    {"item_id": "PM-026", "author_id": "olivia.dupree", "body": "Reproduced it locally, working on a fix.", "tags": [], "created_at": "2026-09-16"},
+    {"item_id": "PM-029", "author_id": "olivia.dupont", "body": "First draft written, waiting on review.", "tags": [], "created_at": "2026-09-17"},
 ]
 
 # ---------------------------------------------------------------------------

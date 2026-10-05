@@ -182,3 +182,51 @@ def test_difficulty_10_two_assignees_have_similar_names():
             break
         shared_prefix_len += 1
     assert shared_prefix_len >= 3  # "Dup" of Dupont/Dupree
+
+
+def _activity_days_by_member(conn) -> dict[str, set[str]]:
+    """Every kind of dated activity a member has: status changes on items
+    they own, comments they wrote or that sit on their items, commits they
+    authored, and commitments they made."""
+    activity: dict[str, set[str]] = {row["id"]: set() for row in conn.execute("SELECT id FROM assignees")}
+    queries = (
+        "SELECT i.assignee_id AS who, t.changed_at AS at FROM item_transitions t JOIN items i ON i.id = t.item_id",
+        "SELECT i.assignee_id AS who, c.created_at AS at FROM item_comments c JOIN items i ON i.id = c.item_id",
+        "SELECT author_id AS who, created_at AS at FROM item_comments",
+        "SELECT author_id AS who, committed_at AS at FROM commits",
+        "SELECT member_id AS who, made_at AS at FROM commitments",
+    )
+    for query in queries:
+        for row in conn.execute(query):
+            if row["who"] in activity:
+                activity[row["who"]].add(row["at"][:10])
+    return activity
+
+
+def test_difficulty_3_aisha_is_the_only_member_with_prior_activity_who_goes_quiet(seeded_conn):
+    """The planted case must be unambiguous: a detector for "no activity on
+    the two days before the anchor" may only return aisha.rahman, plus
+    sofia.lindqvist, who has no activity at all (PM-10's separate case)."""
+    gap_days = {(ANCHOR_DATE - timedelta(days=n)).isoformat() for n in (1, 2)}
+    activity = _activity_days_by_member(seeded_conn)
+
+    quiet = {member for member, days in activity.items() if not (days & gap_days)}
+    assert quiet == {"aisha.rahman", "sofia.lindqvist"}
+
+    had_earlier_activity = {member for member in quiet if activity[member]}
+    assert had_earlier_activity == {"aisha.rahman"}
+    assert activity["sofia.lindqvist"] == set()
+
+
+def test_difficulty_5_no_other_item_in_any_sprint_was_added_mid_sprint(seeded_conn):
+    """Checked across every sprint: a definition of "added mid-sprint" that
+    only held for Sprint 13 would hand a detector five extra false
+    positives from Sprint 12."""
+    offsets = {}
+    for row in seeded_conn.execute(
+        "SELECT i.id, i.created_at, s.start_date FROM items i JOIN sprints s ON s.id = i.sprint_id"
+    ):
+        offsets[row["id"]] = (date.fromisoformat(row["created_at"][:10]) - date.fromisoformat(row["start_date"])).days
+
+    assert {item for item, days in offsets.items() if days > 3} == {"PM-019", "PM-020"}
+    assert max(days for item, days in offsets.items() if item not in {"PM-019", "PM-020"}) <= 2
