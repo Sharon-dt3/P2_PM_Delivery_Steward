@@ -55,6 +55,7 @@ from pm.approval.service import (
     load_approval_policy,
 )
 from pm.jobs.snapshot_capture import capture_snapshot
+from pm.mirror.hook import mirrored
 from pm.reporting.facts import compute_morning_brief_facts
 from pm.reporting.morning_brief import MorningBrief, generate_morning_brief
 from pm.scheduling.config import ProjectScheduleConfig
@@ -76,6 +77,7 @@ class MorningBriefJobResult:
     proposal_id: str | None = None
 
 
+@mirrored
 def run_morning_brief_job(
     config: ProjectScheduleConfig,
     gateway,

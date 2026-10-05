@@ -38,6 +38,7 @@ from spine.approval.write_guard import WriteRefusedError, guarded_send
 from pm.adapters.teams import get_teams_publisher
 from pm.approval.audit import AGENT, AUTO_APPROVER, write_audit
 from pm.approval.proposals import BRIEF_PROPOSAL_TYPE
+from pm.mirror.hook import mirrored
 from pm.reporting.morning_brief import _AS_RECORDED
 from pm.scheduling.config import P1_CHANNEL_CONFIG_DIR
 from pm.storage.db import DEFAULT_DB_PATH
@@ -138,6 +139,7 @@ def _out_of_scope(proposal: Proposal, publisher, policy: ApprovalPolicy) -> str 
     return None
 
 
+@mirrored
 def approve_and_send(
     proposal_id: str,
     *,
@@ -196,6 +198,7 @@ def approve_and_send(
     return _execute(proposal_id, actor=approver, publisher=publisher, policy=policy, store=store, db_path=db_path)
 
 
+@mirrored
 def reject(
     proposal_id: str,
     *,
@@ -220,6 +223,7 @@ def reject(
     return ActionResult(proposal_id, REJECTED_OUTCOME, "rejected")
 
 
+@mirrored
 def send_approved(
     proposal_id: str,
     *,
@@ -326,6 +330,7 @@ def explain_hold(
     return _auto_hold_reason(proposal, policy, publisher, store)
 
 
+@mirrored
 def auto_approve_and_send(
     proposal_id: str,
     *,

@@ -22,6 +22,7 @@ from zoneinfo import ZoneInfo
 from spine.config.calendar import is_working_day
 
 from pm.jobs.snapshot_capture import capture_snapshot
+from pm.mirror.hook import mirrored
 from pm.scheduling.config import ProjectScheduleConfig
 from pm.storage.db import DEFAULT_DB_PATH
 
@@ -37,6 +38,7 @@ class EndOfDayJobResult:
     detail: str
 
 
+@mirrored
 def run_end_of_day_job(
     config: ProjectScheduleConfig,
     *,
