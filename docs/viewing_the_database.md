@@ -31,6 +31,13 @@ P1's mirror, which lives in the default schema.
    every approve, reject or send then refresh it in the background. It returns at once,
    bursts are coalesced, and a failure is only logged: it can never affect the app.
 
+Two safeguards keep a wrong database from ever reaching the mirror: the automatic
+refresh only ever syncs the configured database (`PM_DB_PATH`, default `data/pm.db`,
+compared as real paths), and the test suite pins the mirror off. (A test run once
+pushed a temporary database over the real mirror because the dashboard tests load the
+real `.env`; the mirror was restored, and both safeguards now have tests.)
+`scripts/sync_to_supabase.py --db FILE` can still mirror any file, deliberately and by name.
+
 The copy is only as fresh as its last sync, and every column is text (it is for
 reading, not for querying). Rows deleted in SQLite are deleted in the mirror.
 Tested against a real Postgres: 158 rows in 13 tables, identical on a second run.

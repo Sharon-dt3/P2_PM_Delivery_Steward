@@ -5,10 +5,10 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from spine.storage.db import run_migrations
 
 from pm.seed.build import build_seed
 from pm.storage.db import MIGRATIONS_DIR, get_connection
-from spine.storage.db import run_migrations
 
 
 def _build_seeded_db(db_path: Path) -> None:
@@ -42,3 +42,14 @@ def seeded_db_path(tmp_path) -> Path:
     db_path = tmp_path / "pm_adapter_test.db"
     _build_seeded_db(db_path)
     return db_path
+
+
+@pytest.fixture(autouse=True)
+def _tests_never_touch_the_real_supabase_mirror(monkeypatch):
+    """The real .env turns the Supabase mirror on and holds its URL. The dashboard
+    tests run the app, which calls load_dotenv() on that file, and a leaked setting
+    once pushed a temporary test database over the real mirror. Pin it off for every
+    test: load_dotenv() does not override a variable that is already set (even to
+    an empty value), and tests that need the mirror set their own values."""
+    monkeypatch.setenv("PM_SUPABASE_MIRROR", "0")
+    monkeypatch.setenv("SUPABASE_DB_URL", "")

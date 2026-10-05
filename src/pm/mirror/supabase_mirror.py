@@ -181,14 +181,32 @@ def wait_for_pending(timeout: float = 30.0) -> None:
         thread.join(timeout)
 
 
+def _is_the_configured_database(db_path: str | Path) -> bool:
+    """True only for the database the app is configured to use (PM_DB_PATH, else
+    data/pm.db). Compared as real paths, so spelling does not matter. The automatic
+    refresh serves that one file only; scripts/sync_to_supabase.py --db can still
+    mirror any file, deliberately and by name."""
+    from pm.storage.db import DEFAULT_DB_PATH
+
+    configured = os.environ.get("PM_DB_PATH") or DEFAULT_DB_PATH
+    try:
+        return Path(db_path).resolve() == Path(configured).resolve()
+    except OSError:
+        return False
+
+
 def mirror_if_enabled(db_path: str | Path) -> None:
     """Refresh the mirror after the app has written to SQLite -- only when
     PM_SUPABASE_MIRROR is exactly "1" and SUPABASE_DB_URL is set. Returns at once
     (the sync runs in the background), never raises, and bursts of writes are
-    coalesced: while a sync runs, further requests just mark it for one more run."""
+    coalesced: while a sync runs, further requests just mark it for one more run.
+    Only the configured database is ever refreshed this way (see
+    _is_the_configured_database)."""
     url = os.environ.get("SUPABASE_DB_URL", "")
     if os.environ.get("PM_SUPABASE_MIRROR", "") != "1" or not url:
         return
+    if not _is_the_configured_database(db_path):
+        return  # never push a temporary or test database over the real mirror
     schema = os.environ.get("PM_SUPABASE_SCHEMA", DEFAULT_SCHEMA)
 
     with _lock:

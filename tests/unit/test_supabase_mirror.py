@@ -232,6 +232,15 @@ def test_a_missing_sqlite_file_is_an_error_and_is_not_created(tmp_path):
     assert not (tmp_path / "nope.db").exists()
 
 
+@pytest.fixture(autouse=True)
+def _small_db_is_the_configured_database(request, monkeypatch):
+    """Most tests below exercise the automatic refresh on small_db, which only ever
+    refreshes the configured database; make it that one (tests of the guard itself
+    opt out by name)."""
+    if "small_db" in request.fixturenames and "guard" not in request.node.name:
+        monkeypatch.setenv("PM_DB_PATH", str(request.getfixturevalue("small_db")))
+
+
 # --- the automatic refresh ----------------------------------------------------------------------------
 
 
@@ -413,3 +422,53 @@ def test_against_a_real_postgres(small_db):
         pg.commit()
     finally:
         pg.close()
+
+
+# --- it can never touch anything but the real database ------------------------------------------------
+
+
+def test_the_automatic_refresh_ignores_any_database_but_the_configured_one(small_db, tmp_path, monkeypatch):
+    """The guard: a leaked mirror setting must never push a temporary or test
+    database over the real mirror."""
+    calls = []
+    monkeypatch.setattr(supabase_mirror, "sync", lambda path, url, **kw: calls.append(str(path)))
+    monkeypatch.setattr(supabase_mirror, "_run_in_background", lambda fn: fn())
+    monkeypatch.setenv("PM_SUPABASE_MIRROR", "1")
+    monkeypatch.setenv("SUPABASE_DB_URL", SECRET_URL)
+    real = tmp_path / "real.db"
+    real.write_bytes(small_db.read_bytes())
+    monkeypatch.setenv("PM_DB_PATH", str(real))
+
+    mirror_if_enabled(small_db)  # some other database, e.g. a test's temp file
+    assert calls == []
+
+    mirror_if_enabled(real)  # the configured one
+    assert calls == [str(real)]
+
+
+def test_the_guard_compares_real_paths_not_spellings(small_db, monkeypatch):
+    calls = []
+    monkeypatch.setattr(supabase_mirror, "sync", lambda path, url, **kw: calls.append(str(path)))
+    monkeypatch.setattr(supabase_mirror, "_run_in_background", lambda fn: fn())
+    monkeypatch.setenv("PM_SUPABASE_MIRROR", "1")
+    monkeypatch.setenv("SUPABASE_DB_URL", SECRET_URL)
+    link = small_db.parent / "alias.db"
+    link.symlink_to(small_db)  # a different spelling of the very same file
+    monkeypatch.setenv("PM_DB_PATH", str(link))
+
+    mirror_if_enabled(small_db)
+
+    assert calls == [str(small_db)]
+
+
+def test_the_test_suite_can_never_reach_the_real_mirror_even_after_loading_the_real_env_file():
+    """The dashboard tests run the app, which calls load_dotenv() on the real .env.
+    The suite pins the mirror off, and load_dotenv does not override what is set."""
+    from pathlib import Path
+
+    from dotenv import load_dotenv
+
+    load_dotenv(Path(__file__).resolve().parents[2] / ".env")
+
+    assert os.environ.get("PM_SUPABASE_MIRROR") == "0"
+    assert os.environ.get("SUPABASE_DB_URL") == ""
