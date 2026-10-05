@@ -90,7 +90,7 @@ def test_it_lists_a_pending_brief_with_its_text(seeded_db_path):
 
     _no_exception(at)
     text = _text(at)
-    assert "2026-09-16" in text and CHANNEL_ID in text and proposal_id[:8] in text
+    assert "2026-09-16" in text and "Project Gamma" in text and proposal_id[:8] in text
     assert "Morning brief — 2026-09-16" in text  # the exact text that would be posted
     assert at.button(key=f"approve_{proposal_id}") is not None and at.button(key=f"reject_{proposal_id}") is not None
 

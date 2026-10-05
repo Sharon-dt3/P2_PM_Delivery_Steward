@@ -11,6 +11,8 @@ from spine.approval.proposals import APPROVED, ProposalStore
 
 from pm.approval import service
 from pm.approval.audit import audit_trail, describe, recent_proposals
+from pm.dashboard.names import channel_name
+from pm.dashboard.p1_panel import p1_db_path
 
 
 def _done(level: str, result: service.ActionResult) -> None:
@@ -33,7 +35,7 @@ def _pending(policy, acting_as, db_path) -> None:
         st.info("Nothing is awaiting approval.")
     for item in pending:
         with st.container(border=True):
-            st.subheader(f"{item.local_date}  →  {item.target_channel}")
+            st.subheader(f"{item.local_date}  →  {channel_name(item.target_channel, p1_db_path())}")
             created = item.created_at.split(".")[0].replace("T", " ") + " UTC"
             st.caption(f"proposal {item.proposal_id[:8]}… · proposed {created} · {item.type}")
             why = service.explain_hold(item.proposal_id, policy=policy, db_path=db_path)
@@ -74,7 +76,8 @@ def _unsent(policy, acting_as, db_path) -> None:
     for proposal in unsent:
         with st.container(border=True):
             st.write(
-                f"{proposal.payload.get('local_date', '?')} → {proposal.payload.get('target_channel', '?')} "
+                f"{proposal.payload.get('local_date', '?')} → "
+                f"{channel_name(proposal.payload.get('target_channel', '?'), p1_db_path())} "
                 f"· approved by {proposal.approver_id}"
             )
             if acting_as and st.button("Retry send", key=f"retry_{proposal.id}"):

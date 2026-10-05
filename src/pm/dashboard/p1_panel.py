@@ -15,6 +15,7 @@ from pathlib import Path
 import streamlit as st
 
 from pm.adapters.teams import P1_REPO_ROOT
+from pm.dashboard.names import channel_name, channel_owner_name, member_name
 
 P1_DASHBOARD_HINT = "cd ~/Desktop/P3_Agents && uv run streamlit run app/approval_dashboard.py"
 
@@ -43,15 +44,22 @@ def load_p1(db_path: Path | None = None) -> P1View:
         return P1View(path, None, f"could not read P1's approvals ({type(exc).__name__}: {exc})")
 
 
-def _display_name(channel_id: str, db_path: Path) -> str:
-    try:
-        from p1.config.loader import ChannelConfigStore
+def _goes_to(item, db_path: Path) -> str:
+    """Who or where this item is sent, by name."""
+    if item.type == "nudge":
+        return member_name(item.payload.get("member_id", "?"), db_path)
+    if item.type == "escalation":
+        return channel_owner_name(item.channel_id, db_path) or "the channel owner"
+    return channel_name(item.payload.get("target_channel", item.channel_id), db_path)
 
-        return ChannelConfigStore(P1_REPO_ROOT / "config" / "channels").get_effective_config(
-            channel_id, db_path=db_path
-        ).display_name
-    except Exception:  # noqa: BLE001 - an unknown channel is shown by its id
-        return channel_id
+
+def _named_summary(item, db_path: Path) -> str:
+    """P1's own summary line, with every id swapped for a name (display only)."""
+    summary = item.summary.replace(item.channel_id, channel_name(item.channel_id, db_path))
+    member_id = item.payload.get("member_id")
+    if member_id:
+        summary = summary.replace(member_id, member_name(member_id, db_path))
+    return summary
 
 
 def render(view: P1View) -> None:
@@ -67,11 +75,12 @@ def render(view: P1View) -> None:
         return
     for item in view.pending:
         with st.container(border=True):
-            channel = _display_name(item.channel_id, view.db_path)
+            channel = channel_name(item.channel_id, view.db_path)
             st.subheader(f"{item.type}  →  {channel}")
             created = item.created_at.split(".")[0].replace("T", " ") + " UTC"
             st.caption(f"proposal {item.proposal_id[:8]}… · proposed {created}")
-            st.write(item.summary.replace(item.channel_id, channel))
+            st.write(_named_summary(item, view.db_path))
+            st.write(f"Goes to: **{_goes_to(item, view.db_path)}**")
             content = item.payload.get("content")
             if content:
                 with st.expander("Message to be posted", expanded=False):
