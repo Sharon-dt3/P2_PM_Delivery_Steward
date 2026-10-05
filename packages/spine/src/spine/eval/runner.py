@@ -32,6 +32,7 @@ def run_eval(
     prompt_versions: dict[str, str] | None = None,
     results_path: str | Path = DEFAULT_RESULTS_PATH,
     out: TextIO = sys.stdout,
+    extra: dict | None = None,
 ) -> EvalRunSummary:
     all_results: list[MetricResult] = []
 
@@ -61,6 +62,10 @@ def run_eval(
         ],
         "all_passed": all_passed,
     }
+    # Run-level facts the caller wants kept with the numbers (e.g. the code
+    # revision that produced them); never overrides the fields above.
+    for key, value in (extra or {}).items():
+        record.setdefault(key, value)
     append_run(record, results_path)
 
     return EvalRunSummary(results=all_results, all_passed=all_passed)

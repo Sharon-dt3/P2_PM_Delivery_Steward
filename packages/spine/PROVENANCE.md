@@ -18,3 +18,7 @@ keeping are folded back into P1's spine deliberately, not implicitly.
   P2 uses it to require a verbatim quote and to reject ids/numbers a brief line
   invents. Four new tests in `tests/test_grounding.py`. Candidate for folding
   back into P1's spine at PM-40 ("citation resolver generalisation").
+- `spine.eval.runner.run_eval`: an optional `extra` dict of run-level fields
+  (P2 records the git revision and a dirty flag) merged into the run record
+  without overriding any existing field. Backwards compatible. Covered by P2's
+  `tests/unit/test_eval_pm12_strict.py`. Candidate for folding back at PM-40.

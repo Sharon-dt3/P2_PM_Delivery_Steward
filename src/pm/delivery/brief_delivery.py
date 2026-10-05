@@ -54,6 +54,12 @@ class DeliveryResult:
     response: dict | None = None
 
 
+def format_brief_message(label: str, local_date: str, content: str) -> str:
+    """The exact text posted for a morning brief: an optional label, a dated
+    title, then the brief itself and nothing else."""
+    return f"{label}Morning brief — {local_date}\n\n{content}"
+
+
 def load_delivery_policy(config_dir: str | Path = P1_CHANNEL_CONFIG_DIR) -> DeliveryPolicy:
     """Live posting is on only when PM_ALLOW_LIVE_POST is exactly "1"; the
     allowlist is P1's own (config/channels, allowlisted: true)."""

@@ -13,23 +13,36 @@ line with no reference, one citing an item that does not exist), so the
 number is a real measurement rather than a vacuous 1.0; pass a real
 gateway_factory to measure an actual model instead.
 
-GC2 -- of the lines and rendered text that survive into the FINAL brief,
-how many claim something the facts do not support? A hard zero. The check
-is re-derived here from `facts` itself, never from the kernel's own
-bookkeeping (brief.dropped): every surviving line's reference must belong to
-the SAME section's own fact set (a real item cited under the wrong section
-is exactly as dishonest as an invented one), and every person's rendered
-block must contain only text from lines legitimately theirs. Three
-scenarios feed it: the real seeded brief with the model tampered on its
-first attempt (cross-section leaks), the zero-activity assignee inside that
-same brief, and an empty day where the model must not be called at all.
+GC2 -- of the lines and rendered text that survive into the FINAL brief and
+the text posted to Teams, how many claim something the facts do not support?
+A hard zero, and the most important number in the submission, so the probe is
+built to be able to fail. The check is re-derived here from `facts` itself,
+never from the kernel's own bookkeeping (brief.dropped): every surviving
+line's reference must belong to its own section's facts, its ids, numbers,
+quote and plain words must be its fact's own, and every rendered block must
+contain only text from lines legitimately that person's. Scenarios:
+  - seeded: the real seeded brief, the model wrong once then corrected;
+  - planted forgeries: eight kinds of lying line (invented id or number,
+    embellishing words, missing or fake quote, wrong-section, nonexistent and
+    missing reference), each tried when the model corrects itself and when it
+    never does -- none may survive;
+  - zero-activity: the silent assignee inside the seeded brief;
+  - empty day: no facts, and the model must not be called;
+  - commit-only: a person whose only activity is commits;
+  - posted message: what actually goes to Teams adds nothing to the brief;
+  - live model brief, when a real model is evaluated;
+  - extra probes registered with register_gc2_probe (the end-of-day summary,
+    PM-22, registers here once it exists; the row says "brief and summary").
 """
 
 from __future__ import annotations
 
 import json
 import re
+import tempfile
 from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import datetime, time, timezone
 from pathlib import Path
 
 from spine.eval.cases import (
@@ -47,6 +60,7 @@ from pm.adapters.commitments import CommitmentsMock
 from pm.adapters.risk_log import RiskLogMock
 from pm.adapters.teams import get_teams_reader
 from pm.adapters.tracker import TrackerMock
+from pm.delivery.brief_delivery import DeliveryPolicy
 from pm.eval.golden_cases import MORNING
 from pm.reporting.facts import (
     MorningBriefFacts,
@@ -54,6 +68,7 @@ from pm.reporting.facts import (
     compute_morning_brief_facts,
 )
 from pm.reporting.morning_brief import (
+    _ALLOWED_WORDS,
     _AS_RECORDED,
     _NO_ACTIVITY_LINE,
     _SECTION_LABELS,
@@ -64,9 +79,9 @@ from pm.reporting.morning_brief import (
     _section_facts,
     generate_morning_brief,
 )
-from pm.seed.build import CHANNEL_ID
+from pm.seed.build import CHANNEL_ID, build_seed
 from pm.state.snapshot import build_snapshot
-from pm.storage.db import DEFAULT_DB_PATH
+from pm.storage.db import DEFAULT_DB_PATH, MIGRATIONS_DIR, get_connection
 
 GC1_TARGET = 0.90
 _ITEM_SECTIONS = ("committed", "delivered", "pending", "blocked")
@@ -130,10 +145,16 @@ class ScriptedGateway:
     reference echoed exactly, detail text as the prose. `tamper` maps a
     section key to a function that rewrites that section's FIRST-attempt
     lines (a forged or misplaced reference); every later attempt for that
-    section is faithful again, as a model correcting itself on retry."""
+    section is faithful again, as a model correcting itself on retry.
+    `persistent_tamper` rewrites EVERY attempt: a model that never does."""
 
-    def __init__(self, tamper: dict[str, Callable[[list[dict]], list[dict]]] | None = None) -> None:
+    def __init__(
+        self,
+        tamper: dict[str, Callable[[list[dict]], list[dict]]] | None = None,
+        persistent_tamper: dict[str, Callable[[list[dict]], list[dict]]] | None = None,
+    ) -> None:
         self._tamper = tamper or {}
+        self._persistent_tamper = persistent_tamper or {}
         self._attempts: dict[str, int] = {}
         self.calls = 0
 
@@ -144,6 +165,8 @@ class ScriptedGateway:
         lines = [{"text": detail, "reference_id": ref, "quote": detail} for ref, detail in _prompt_facts(prompt)]
         if self._attempts[key] == 1 and key in self._tamper:
             lines = self._tamper[key](lines)
+        if key in self._persistent_tamper:  # a model that never corrects itself
+            lines = self._persistent_tamper[key](lines)
         return _response(lines)
 
 
@@ -182,10 +205,14 @@ def _default_gc1_gateway() -> ScriptedGateway:
 def measure_gc1(
     facts: MorningBriefFacts | None = None,
     gateway_factory: Callable[[], object] = _default_gc1_gateway,
+    precomputed: tuple[RecordingGateway, MorningBrief] | None = None,
 ) -> list[MetricResult]:
     facts = facts or build_seeded_facts()
-    recorder = RecordingGateway(gateway_factory())
-    generate_morning_brief(facts, recorder)
+    if precomputed is not None:  # a live model pass already made, shared with GC2
+        recorder, _ = precomputed
+    else:
+        recorder = RecordingGateway(gateway_factory())
+        generate_morning_brief(facts, recorder)
 
     drafted = [
         FactualLine(text=line.get("text", ""), message_id=line.get("reference_id"))
@@ -264,15 +291,72 @@ def _person_block(content: str, assignee_id: str) -> list[str]:
     return block
 
 
+_PROBE_ID_RE = re.compile(r"\b[A-Za-z]+-\d+\b")
+_PROBE_NUMBER_RE = re.compile(r"\d+(?:\.\d+)?")
+_PROBE_WORD_RE = re.compile(r"[A-Za-z]+")
+_PROBE_MIN_QUOTE = 8
+
+
+def _details_by_ref(facts: MorningBriefFacts) -> dict[tuple[str, str], list[str]]:
+    table: dict[tuple[str, str], list[str]] = {}
+    for key, items in _section_facts(facts).items():
+        for item in items:
+            table.setdefault((key, item.reference_id), []).append(item.detail)
+    return table
+
+
+def _unsupported_words(text: str, detail: str) -> list[str]:
+    """Words in `text` that neither echo a word of `detail` nor are plain
+    connecting/status words. Matching is deliberately lenient (shared first
+    four letters), and written separately from the production check, so the
+    probe and the check can disagree -- which is the point of a probe."""
+    known = {w.lower() for w in _PROBE_WORD_RE.findall(_PROBE_ID_RE.sub(" ", detail))} | set(_ALLOWED_WORDS)
+    out: list[str] = []
+    for word in _PROBE_WORD_RE.findall(_PROBE_ID_RE.sub(" ", text)):
+        w = word.lower()
+        if len(w) <= 2 or any(w.startswith(k[:4]) or k.startswith(w[:4]) for k in known if len(k) >= 3):
+            continue
+        if word not in out:
+            out.append(word)
+    return out
+
+
+def _line_problems(line: FactualLine, detail: str) -> list[str]:
+    """What is wrong with one surviving line against its own fact's text."""
+    problems = []
+    fact_ids = {m.lower() for m in _PROBE_ID_RE.findall(detail)}
+    fact_numbers = {float(m) for m in _PROBE_NUMBER_RE.findall(_PROBE_ID_RE.sub(" ", detail))}
+    for found in _PROBE_ID_RE.findall(line.text):
+        if found.lower() not in fact_ids:
+            problems.append(f"line mentions {found}, which its fact does not")
+    for found in _PROBE_NUMBER_RE.findall(_PROBE_ID_RE.sub(" ", line.text)):
+        if float(found) not in fact_numbers:
+            problems.append(f"line mentions the number {found}, which its fact does not")
+    quote = (line.quote or "").strip()
+    if len(quote) < _PROBE_MIN_QUOTE or quote not in detail:
+        problems.append(f"line's quote {quote!r} is missing, too short, or not in its fact")
+    words = _unsupported_words(line.text, detail)
+    if words:
+        problems.append(f"line uses words its fact does not: {', '.join(words)}")
+    return problems
+
+
 def count_fabrications(brief: MorningBrief, facts: MorningBriefFacts) -> list[str]:
     """Independent of the kernel: re-derived straight from `facts`."""
     problems: list[str] = []
     legit = _section_refs(facts)
 
+    details = _details_by_ref(facts)
     for key in SECTION_ORDER:
         for line in brief.sections[key]:
             if line.message_id not in legit[key]:
                 problems.append(f"{key}: line cites {line.message_id!r}, which is not one of this section's facts")
+                continue
+            # the same reference can name more than one fact (two commitments on
+            # one item): the line has to be faithful to at least one of them
+            candidates = [_line_problems(line, detail) for detail in details[(key, line.message_id)]]
+            best = min(candidates, key=len)
+            problems += [f"{key}: {p} ({line.message_id})" for p in best]
 
     for person in facts.people:
         block = _person_block(brief.content, person.assignee_id)
@@ -346,40 +430,217 @@ def _cross_section_tamper(facts: MorningBriefFacts) -> dict[str, Callable[[list[
     return tamper
 
 
-def measure_gc2(facts: MorningBriefFacts | None = None) -> list[MetricResult]:
-    facts = facts or build_seeded_facts()
-    problems: list[str] = []
+# --- planted forgeries ---------------------------------------------------------
 
-    seeded_gateway = ScriptedGateway(tamper=_cross_section_tamper(facts))
-    seeded_brief = generate_morning_brief(facts, seeded_gateway)
-    seeded_problems = count_fabrications(seeded_brief, facts)
-    problems += [f"seeded: {p}" for p in seeded_problems]
+
+@dataclass(frozen=True)
+class Forgery:
+    """One way a model's line can lie. `marker` is text that appears in the
+    forged line and nowhere in an honest brief, so its presence in the brief or
+    the posted message is proof the forgery survived."""
+
+    marker: str
+    edit: Callable[[dict, str | None], dict]
+
+    def tamper(self, facts: MorningBriefFacts) -> dict[str, Callable[[list[dict]], list[dict]]]:
+        """Forge the first line of every section that has any."""
+        out: dict[str, Callable[[list[dict]], list[dict]]] = {}
+        for key in SECTION_ORDER:
+            foreign = _foreign_ref(facts, key)
+
+            def rewrite(lines: list[dict], foreign: str | None = foreign) -> list[dict]:
+                return [self.edit(lines[0], foreign), *lines[1:]] if lines else lines
+
+            out[key] = rewrite
+        return out
+
+
+def _foreign_ref(facts: MorningBriefFacts, key: str) -> str | None:
+    own = _section_refs(facts)[key]
+    for other, refs in _section_refs(facts).items():
+        if other != key:
+            for ref in sorted(refs - own):
+                return ref
+    return None
+
+
+def _planted(name: str) -> str:
+    return f"[planted:{name}]"
+
+
+FORGERIES: dict[str, Forgery] = {
+    "invented_id": Forgery("closed PM-9999", lambda line, _: {**line, "text": line["text"] + " and closed PM-9999"}),
+    "invented_number": Forgery("with 12 bugs fixed", lambda line, _: {**line, "text": line["text"] + " with 12 bugs fixed"}),
+    "embellishment": Forgery(
+        "praise from the client", lambda line, _: {**line, "text": line["text"] + " and got praise from the client"}
+    ),
+    "missing_quote": Forgery(
+        _planted("missing_quote"), lambda line, _: {"text": line["text"] + " " + _planted("missing_quote"), "reference_id": line["reference_id"]}
+    ),
+    "fake_quote": Forgery(
+        _planted("fake_quote"),
+        lambda line, _: {**line, "text": line["text"] + " " + _planted("fake_quote"), "quote": "words that appear nowhere in any fact"},
+    ),
+    "cross_section_reference": Forgery(
+        _planted("cross_section_reference"),
+        lambda line, foreign: {**line, "text": line["text"] + " " + _planted("cross_section_reference"), "reference_id": foreign or "item:PM-999"},
+    ),
+    "nonexistent_reference": Forgery(
+        _planted("nonexistent_reference"),
+        lambda line, _: {**line, "text": line["text"] + " " + _planted("nonexistent_reference"), "reference_id": "item:PM-999"},
+    ),
+    "no_reference": Forgery(
+        _planted("no_reference"),
+        lambda line, _: {"text": line["text"] + " " + _planted("no_reference"), "reference_id": None},
+    ),
+}
+
+
+def _survivors(brief: MorningBrief, forgeries: dict[str, Forgery], label: str) -> list[str]:
+    """Planted forgeries that made it into the brief's text or any kept line."""
+    kept = [line.text for lines in brief.sections.values() for line in lines]
+    return [
+        f"{label}/{name}: planted forgery survived"
+        for name, forgery in forgeries.items()
+        if forgery.marker in brief.content or any(forgery.marker in text for text in kept)
+    ]
+
+
+def _planted_forgery_problems(facts: MorningBriefFacts) -> list[str]:
+    problems: list[str] = []
+    for mode, kwarg in (("model corrects on retry", "tamper"), ("model never corrects", "persistent_tamper")):
+        for name, forgery in FORGERIES.items():
+            brief = generate_morning_brief(facts, ScriptedGateway(**{kwarg: forgery.tamper(facts)}))
+            label = f"{name} ({mode})"
+            problems += _survivors(brief, {name: forgery}, mode)
+            problems += [f"{label}: {p}" for p in count_fabrications(brief, facts)]
+    return problems
+
+
+# --- other GC2 scenarios --------------------------------------------------------
+
+
+def _with_commit_only_person(facts: MorningBriefFacts) -> MorningBriefFacts:
+    """The seeded facts plus a teammate whose only activity is three commits."""
+    person = PersonFacts(
+        assignee_id="commit.only", committed=[], delivered=[], pending=[], blocked=[], commit_count=3
+    )
+    return facts.model_copy(update={"people": [*facts.people, person]})
+
+
+def _posted_message_problems() -> list[str]:
+    """Run the real scheduled job into a log-only publisher and check the text
+    that would go to Teams: a dated title, then lines that are the brief's own."""
+    from p1.adapters.teams_publisher_mock import LogPublisher
+    from spine.storage.db import run_migrations
+
+    from pm.jobs.morning_brief_job import run_morning_brief_job
+    from pm.scheduling.config import ProjectScheduleConfig
+
+    moment = datetime(2026, 9, 16, 2, 30, tzinfo=timezone.utc)  # Wed 08:00 in Colombo
+    config = ProjectScheduleConfig(
+        channel_id=CHANNEL_ID, timezone="Asia/Colombo", working_days=["Mon", "Tue", "Wed", "Thu", "Fri"],
+        morning_brief_time=time(8, 0), end_of_day_time=time(17, 0),
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "probe.db"
+        run_migrations(db_path, MIGRATIONS_DIR)
+        conn = get_connection(db_path)
+        try:
+            build_seed(conn)
+        finally:
+            conn.close()
+        log = LogPublisher(Path(tmp) / "log.jsonl")
+        result = run_morning_brief_job(
+            config, ScriptedGateway(), moment=moment, db_path=db_path, publisher=log, policy=DeliveryPolicy()
+        )
+        rows = log.read_log()
+
+    if len(rows) != 1:
+        return [f"posted message: expected exactly one post, got {len(rows)}"]
+    posted = rows[0]["content"].split("\n")
+    brief_lines = set(result.brief.content.split("\n"))
+    problems = []
+    if posted[0] != "Morning brief — 2026-09-16" or posted[1] != "":
+        problems.append(f"posted message: unexpected title {posted[0]!r}")
+    problems += [f"posted message: line not in the brief: {line!r}" for line in posted[2:] if line not in brief_lines]
+    return problems
+
+
+GC2_EXTRA_PROBES: list[tuple[str, Callable[[], list[str]]]] = []
+
+
+def register_gc2_probe(name: str, probe: Callable[[], list[str]]) -> None:
+    """Add a probe that returns fabrication problems for some other report
+    (the end-of-day summary, once PM-22 builds it). Its problems count toward GC2."""
+    GC2_EXTRA_PROBES.append((name, probe))
+
+
+def measure_gc2(facts: MorningBriefFacts | None = None, live_brief: MorningBrief | None = None) -> list[MetricResult]:
+    facts = facts or build_seeded_facts()
+    scenarios: dict[str, list[str]] = {}
+
+    seeded_brief = generate_morning_brief(facts, ScriptedGateway(tamper=_cross_section_tamper(facts)))
+    seeded = count_fabrications(seeded_brief, facts)
+    silent = {p.assignee_id for p in facts.people if not p.has_activity}
+    scenarios["zero-activity"] = [p for p in seeded if p.split(":")[0] in silent]
+    scenarios["seeded"] = [p for p in seeded if p not in scenarios["zero-activity"]]
+
+    scenarios["planted forgeries"] = _planted_forgery_problems(facts)
 
     empty_facts = _empty_day_facts()
     empty_gateway = ScriptedGateway()
     empty_brief = generate_morning_brief(empty_facts, empty_gateway)
-    empty_problems = count_fabrications(empty_brief, empty_facts)
+    empty = count_fabrications(empty_brief, empty_facts)
     if empty_gateway.calls:
-        empty_problems.append(f"model called {empty_gateway.calls} time(s) on a day with no facts")
-    problems += [f"empty day: {p}" for p in empty_problems]
+        empty.append(f"model called {empty_gateway.calls} time(s) on a day with no facts")
+    scenarios["empty day"] = empty
 
-    zero_activity = sum(1 for person in facts.people if not person.has_activity)
+    commit_only_facts = _with_commit_only_person(facts)
+    scenarios["commit-only"] = count_fabrications(
+        generate_morning_brief(commit_only_facts, ScriptedGateway()), commit_only_facts
+    )
+    scenarios["posted message"] = _posted_message_problems()
+
+    if live_brief is not None:
+        scenarios["live model brief"] = count_fabrications(live_brief, facts)
+    for name, probe in GC2_EXTRA_PROBES:
+        scenarios[name] = probe()
+
+    problems = [f"{name}: {p}" for name, found in scenarios.items() for p in found]
+    summary = ", ".join(f"{name} {len(found)}" for name, found in scenarios.items())
+    forgery_runs = len(FORGERIES) * 2
     return [
         MetricResult(
             metric_id="GC2-fabricated-claim-count",
-            name="fabricated claims surviving into the brief (hard zero)",
+            name="fabricated claims surviving into the brief or the posted message (hard zero)",
             measured=len(problems),
             target=0,
             comparator_name="at_most",
             passed=at_most(len(problems), 0),
             detail=(
-                f"{len(seeded_brief.sections['delivered']) + len(seeded_brief.sections['pending'])} "
-                f"delivered/pending lines checked, {zero_activity} zero-activity person(s), "
-                f"empty day gateway calls={empty_gateway.calls}"
+                f"scenarios (problems found): {summary}; {len(silent)} zero-activity person(s), "
+                f"{forgery_runs} planted-forgery runs, empty day gateway calls={empty_gateway.calls}"
                 + (f"; first problem: {problems[0]}" if problems else "")
             ),
         )
     ]
+
+
+class _LiveRun:
+    """One real-model pass over the seeded brief, run on first use and shared
+    by GC1 (its first-attempt drafts) and GC2 (its final brief)."""
+
+    def __init__(self, facts_fn: Callable[[], MorningBriefFacts], gateway_factory: Callable[[], object]) -> None:
+        self._facts_fn = facts_fn
+        self._gateway_factory = gateway_factory
+        self._result: tuple[RecordingGateway, MorningBrief] | None = None
+
+    def get(self) -> tuple[RecordingGateway, MorningBrief]:
+        if self._result is None:
+            recorder = RecordingGateway(self._gateway_factory())
+            self._result = (recorder, generate_morning_brief(self._facts_fn(), recorder))
+        return self._result
 
 
 def register(
@@ -387,18 +648,26 @@ def register(
     *,
     db_path: str | Path | None = None,
     gateway_factory: Callable[[], object] = _default_gc1_gateway,
+    live: bool = False,
 ) -> None:
+    """live=True means gateway_factory is a real model: it is run once and its
+    output is measured by GC1 (citation rate) and GC2 (its brief is probed)."""
+    live_run = _LiveRun(lambda: build_seeded_facts(db_path), gateway_factory) if live else None
     registry.register(
         GoldenCase(
             case_id="GC1",
             description="Citation rate: first-attempt brief lines carrying a resolvable reference",
-            measure_fn=lambda: measure_gc1(build_seeded_facts(db_path), gateway_factory),
+            measure_fn=lambda: measure_gc1(
+                build_seeded_facts(db_path), gateway_factory, precomputed=live_run.get() if live_run else None
+            ),
         )
     )
     registry.register(
         GoldenCase(
             case_id="GC2",
             description="Fabrication probe: no claim survives that the facts do not support",
-            measure_fn=lambda: measure_gc2(build_seeded_facts(db_path)),
+            measure_fn=lambda: measure_gc2(
+                build_seeded_facts(db_path), live_brief=live_run.get()[1] if live_run else None
+            ),
         )
     )

@@ -45,6 +45,7 @@ from pm.delivery.brief_delivery import (
     DeliveryPolicy,
     DeliveryResult,
     deliver_brief,
+    format_brief_message,
     load_delivery_policy,
 )
 from pm.jobs.snapshot_capture import capture_snapshot
@@ -126,7 +127,7 @@ def _deliver(config, brief, local_date, publisher, policy, db_path, redeliver):
     except Exception as exc:  # noqa: BLE001 - a misconfigured publisher fails the delivery, not the job
         return DeliveryResult(FAILED, f"{type(exc).__name__}: {exc}")
     return deliver_brief(
-        f"{config.message_label}Morning brief — {local_date}\n\n{brief.content}",
+        format_brief_message(config.message_label, local_date, brief.content),
         kind="morning_brief",
         target_channel_id=config.publish_channel_id or config.channel_id,
         local_date=local_date,
