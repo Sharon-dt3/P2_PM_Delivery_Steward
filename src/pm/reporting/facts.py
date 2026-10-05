@@ -115,6 +115,7 @@ class MorningBriefFacts(BaseModel):
     sprint: SprintScopeFacts | None = None  # None if taken_at's date falls outside every known sprint
     people: list[PersonFacts]
     blockers: list[BlockerFact]
+    automated_commit_count: int = 0  # commits by ignored automated accounts (bots): not anyone's activity, but not hidden
 
 
 def _resolve_sprint_scope(snapshot: ProjectSnapshot, as_of_date: str) -> SprintScopeFacts | None:
@@ -138,7 +139,25 @@ def _resolve_sprint_scope(snapshot: ProjectSnapshot, as_of_date: str) -> SprintS
     return None  # as_of_date isn't covered by any sprint on file -- an honest gap, not an error
 
 
-def _compute_person_facts(snapshot: ProjectSnapshot) -> list[PersonFacts]:
+def _commits_by_person(snapshot: ProjectSnapshot) -> tuple[dict[str, int], int]:
+    """Commits per canonical person, and the number by ignored automated
+    accounts. Authors are resolved through snapshot.identities (aliases,
+    ignored accounts, roster ids ignoring case); anyone else is taken as
+    written."""
+    roster_ids = [assignee.id for assignee in snapshot.roster]
+    snapshot.identities.validate(roster_ids)
+    counts: dict[str, int] = {}
+    automated = 0
+    for commit in snapshot.commits:
+        person = snapshot.identities.resolve(commit.author_id, roster_ids)
+        if person is None:
+            automated += 1
+        else:
+            counts[person] = counts.get(person, 0) + 1
+    return counts, automated
+
+
+def _compute_person_facts(snapshot: ProjectSnapshot, commit_counts: dict[str, int]) -> list[PersonFacts]:
     # The roster is the base set (PM-10): every person snapshot.roster
     # names gets a PersonFacts entry, whether or not they own a single
     # item, commitment or commit. Ids observed on an item/commitment/commit but
@@ -150,7 +169,7 @@ def _compute_person_facts(snapshot: ProjectSnapshot) -> list[PersonFacts]:
     assignee_ids = {assignee.id for assignee in snapshot.roster}
     assignee_ids |= {item.assignee_id for item in snapshot.items if item.assignee_id is not None}
     assignee_ids |= {commitment.member_id for commitment in snapshot.commitments}
-    assignee_ids |= {commit.author_id for commit in snapshot.commits}
+    assignee_ids |= set(commit_counts)
 
     people: list[PersonFacts] = []
     for assignee_id in sorted(assignee_ids):
@@ -175,7 +194,7 @@ def _compute_person_facts(snapshot: ProjectSnapshot) -> list[PersonFacts]:
             ),
             key=lambda fact: fact.item_id,
         )
-        commit_count = sum(1 for commit in snapshot.commits if commit.author_id == assignee_id)
+        commit_count = commit_counts.get(assignee_id, 0)
         people.append(
             PersonFacts(
                 assignee_id=assignee_id,
@@ -216,9 +235,11 @@ def compute_morning_brief_facts(snapshot: ProjectSnapshot) -> MorningBriefFacts:
     function that could make it do otherwise (no clock read, no
     randomness, no I/O)."""
     as_of_date = snapshot.taken_at[:10]
+    commit_counts, automated = _commits_by_person(snapshot)
     return MorningBriefFacts(
         as_of=snapshot.taken_at,
         sprint=_resolve_sprint_scope(snapshot, as_of_date),
-        people=_compute_person_facts(snapshot),
+        people=_compute_person_facts(snapshot, commit_counts),
         blockers=_compute_blocker_facts(snapshot),
+        automated_commit_count=automated,
     )

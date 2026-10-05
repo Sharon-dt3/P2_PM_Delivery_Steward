@@ -53,6 +53,7 @@ from pm.adapters.commitments import Commitment, CommitmentsStore
 from pm.adapters.risk_log import Risk, RiskLogStore
 from pm.adapters.tracker import Assignee, Sprint, Tracker, TrackerItem
 from pm.seed.build import CANONICAL_STATUSES, CHANNEL_ID
+from pm.state.identities import IdentityMap, load_identities
 from pm.state.moments import parse_moment
 
 UNMAPPED = "UNMAPPED"
@@ -84,6 +85,7 @@ class ProjectSnapshot(BaseModel):
     commitments: list[Commitment] = []
     risks: list[Risk] = []
     roster: list[Assignee] = []
+    identities: IdentityMap = IdentityMap()  # how commit authors map to people; see pm.state.identities
 
 
 def _now_iso() -> str:
@@ -147,6 +149,7 @@ def build_snapshot(
     risk_log: RiskLogStore,
     commitments_store: CommitmentsStore,
     taken_at: str | None = None,
+    identities: IdentityMap | None = None,
 ) -> ProjectSnapshot:
     """Reads all five sources once and normalises them into one
     ProjectSnapshot. Pure normalisation over what the five adapters
@@ -193,10 +196,13 @@ what lets two consecutive snapshots be told apart once persisted.
         commitments=commitments,
         risks=risks,
         roster=roster,
+        identities=identities or IdentityMap(),
     )
 
 
-def build_current_snapshot(db_path=None, *, taken_at: str | None = None) -> ProjectSnapshot:
+def build_current_snapshot(
+    db_path=None, *, taken_at: str | None = None, identities: IdentityMap | None = None
+) -> ProjectSnapshot:
     """Convenience wiring for the common case: TrackerMock/CodeHostMock/
     RiskLogMock/CommitmentsMock over this repo's own seeded db, and P1's
     Teams reader over its own real fixture data
@@ -204,7 +210,8 @@ def build_current_snapshot(db_path=None, *, taken_at: str | None = None) -> Proj
     get_teams_reader()/get_teams_publisher() already play for the chat
     adapter itself. Callers who want different adapters (a future real
     tracker/code-host implementation, or a test double) should call
-    build_snapshot() directly instead."""
+    build_snapshot() directly instead. identities defaults to the map in
+    data/identities.json (empty when there is no such file)."""
     from pm.adapters.code_host import CodeHostMock
     from pm.adapters.commitments import CommitmentsMock
     from pm.adapters.risk_log import RiskLogMock
@@ -226,4 +233,5 @@ def build_current_snapshot(db_path=None, *, taken_at: str | None = None) -> Proj
         risk_log=risk_log,
         commitments_store=commitments_store,
         taken_at=taken_at,
+        identities=identities if identities is not None else load_identities(),
     )
