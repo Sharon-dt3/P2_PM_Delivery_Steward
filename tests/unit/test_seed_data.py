@@ -7,7 +7,16 @@ from __future__ import annotations
 
 from datetime import date
 
-from pm.seed.build import ANCHOR_DATE, ASSIGNEES, COMMITMENTS, COMMITS, ITEM_TRANSITIONS, ITEMS, RISKS, SPRINTS
+from pm.seed.build import (
+    ANCHOR_DATE,
+    ASSIGNEES,
+    COMMITMENTS,
+    COMMITS,
+    ITEM_TRANSITIONS,
+    ITEMS,
+    RISKS,
+    SPRINTS,
+)
 
 
 def test_item_count_is_within_the_planned_25_to_40_range():
@@ -138,3 +147,52 @@ def test_some_commitments_are_overdue_as_of_the_anchor_date():
         if c["due_date_iso"] is not None and date.fromisoformat(c["due_date_iso"]) < ANCHOR_DATE
     ]
     assert len(overdue) >= 2
+
+
+def _fresh_seed_state(db_path) -> dict[str, list[tuple]]:
+    """Every seeded table's full contents, in insertion order, from a
+    brand-new database. schema_migrations is left out on purpose: it
+    records WHEN each migration was applied, a wall-clock fact about the
+    run, not about the seed."""
+    from spine.storage.db import run_migrations
+
+    from pm.seed.build import build_seed
+    from pm.storage.db import MIGRATIONS_DIR, get_connection
+
+    run_migrations(db_path, MIGRATIONS_DIR)
+    conn = get_connection(db_path)
+    try:
+        build_seed(conn)
+        tables = [
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' "
+                "AND name NOT LIKE 'sqlite_%' AND name != 'schema_migrations' ORDER BY name"
+            )
+        ]
+        return {t: [tuple(r) for r in conn.execute(f"SELECT * FROM {t} ORDER BY rowid")] for t in tables}
+    finally:
+        conn.close()
+
+
+def test_a_fresh_seed_reproduces_byte_identical_state(tmp_path):
+    """PM-01's own acceptance test, literal: "a fresh seed reproduces
+    byte-identical state." Two brand-new databases, seeded independently,
+    must hold exactly the same rows in exactly the same order -- compared
+    as the bytes of a canonical serialisation, not just row counts (the
+    idempotency test above only proves counts don't grow)."""
+    import hashlib
+    import json
+
+    first = _fresh_seed_state(tmp_path / "first.db")
+    second = _fresh_seed_state(tmp_path / "second.db")
+
+    # Not vacuous: the tables that matter really are populated.
+    for table in ("items", "item_transitions", "commits", "risks", "commitments", "assignees", "sprints"):
+        assert first[table], f"{table} is empty, so identical-by-emptiness would prove nothing"
+
+    def digest(state) -> str:
+        return hashlib.sha256(json.dumps(state, sort_keys=True, default=str).encode()).hexdigest()
+
+    assert digest(first) == digest(second)
+    assert first == second
