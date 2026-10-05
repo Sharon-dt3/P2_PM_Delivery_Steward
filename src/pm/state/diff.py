@@ -27,12 +27,13 @@ module goes through real datetime objects instead.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import datetime
 
 from pydantic import BaseModel
 
 from pm.adapters.tracker import Tracker, TransitionRecord
 from pm.seed.build import CANONICAL_STATUSES
+from pm.state.moments import parse_moment as _parse_moment
 from pm.state.snapshot import UNMAPPED, ProjectSnapshot
 
 ADDED = "added"
@@ -59,21 +60,6 @@ class SnapshotDelta(BaseModel):
     before_taken_at: str
     after_taken_at: str
     items: list[ItemDelta]
-
-
-def _parse_moment(value: str) -> datetime:
-    """Parses a changed_at/taken_at value -- date-only or full ISO
-    timestamp, offset or naive -- into a directly comparable, always
-    timezone-aware datetime (naive values are treated as UTC, matching
-    every writer in this system: TrackerMock._now_iso() and
-    state.snapshot._now_iso() both use datetime.now(timezone.utc))."""
-    if "T" in value:
-        parsed = datetime.fromisoformat(value)
-    else:
-        parsed = datetime.combine(date.fromisoformat(value), datetime.min.time())
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed
 
 
 def _normalize(status: str) -> str:

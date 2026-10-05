@@ -86,8 +86,11 @@ def test_two_consecutive_snapshots_persist_and_are_independently_readable(seeded
 
     # Change the underlying tracker state between snapshots, so the
     # second snapshot is demonstrably not just the first one persisted
-    # again under a new timestamp.
-    tracker.transition("PM-028", "blocked")
+    # again under a new timestamp. The change is dated inside the window
+    # between the two taken_at moments: a snapshot shows the project as it
+    # was at its own moment, so a change dated after it would (rightly) not
+    # appear in it.
+    _move_at(seeded_db_path, "PM-028", "blocked", "2026-09-18T10:02:00+00:00")
 
     second = build_snapshot(
         tracker,
@@ -131,7 +134,7 @@ def _two_consecutive_snapshots(db_path):
     reader = get_teams_reader(db_path=db_path)
 
     first = build_snapshot(tracker, code_host, reader, CHANNEL_ID, taken_at=FIRST_AT, **adapters)
-    tracker.transition("PM-028", "blocked")
+    _move_at(db_path, "PM-028", "blocked", "2026-09-18T10:02:00+00:00")
     second = build_snapshot(tracker, code_host, reader, CHANNEL_ID, taken_at=SECOND_AT, **adapters)
     return first, second
 
@@ -208,3 +211,18 @@ def test_snapshots_persist_across_separate_processes(seeded_db_path):
 
     assert read_first == first
     assert read_second == second
+
+
+def _move_at(db_path, item_id, to_status, changed_at):
+    """Moves an item to a new status with the transition dated `changed_at`
+    (TrackerMock.transition() always stamps "now", which no longer falls
+    between two past snapshot moments)."""
+    import sqlite3
+
+    with sqlite3.connect(db_path) as conn:
+        (current,) = conn.execute("SELECT status FROM items WHERE id = ?", (item_id,)).fetchone()
+        conn.execute(
+            "INSERT INTO item_transitions (item_id, from_status, to_status, changed_at) VALUES (?, ?, ?, ?)",
+            (item_id, current, to_status, changed_at),
+        )
+        conn.execute("UPDATE items SET status = ? WHERE id = ?", (to_status, item_id))

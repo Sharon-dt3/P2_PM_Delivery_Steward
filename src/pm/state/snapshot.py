@@ -53,6 +53,7 @@ from pm.adapters.commitments import Commitment, CommitmentsStore
 from pm.adapters.risk_log import Risk, RiskLogStore
 from pm.adapters.tracker import Assignee, Sprint, Tracker, TrackerItem
 from pm.seed.build import CANONICAL_STATUSES, CHANNEL_ID
+from pm.state.moments import parse_moment
 
 UNMAPPED = "UNMAPPED"
 
@@ -107,6 +108,36 @@ def normalize_item(item: TrackerItem) -> NormalizedItem:
     )
 
 
+def _items_as_of(tracker: Tracker, items: list[TrackerItem], moment: datetime) -> list[NormalizedItem]:
+    """Each item as it stood at `moment`, rebuilt from the tracker's
+    transition history. An item created after `moment` did not exist yet
+    and is left out. An item with no transition after `moment` passes
+    through exactly as the tracker returns it -- which is every item, for
+    a snapshot of the present. One that changed since is put back to the
+    status it held then (before its first transition, that transition's own
+    from_status), and carries blocked_since only if it was blocked then."""
+    result = []
+    for item in items:
+        if parse_moment(item.created_at) > moment:
+            continue
+        history = tracker.list_transitions(item.id)
+        if not any(parse_moment(record.changed_at) > moment for record in history):
+            result.append(normalize_item(item))
+            continue
+        status = history[0].from_status
+        entered_blocked = None
+        for record in history:
+            if parse_moment(record.changed_at) <= moment:
+                status = record.to_status
+                if record.to_status == "blocked":
+                    entered_blocked = record.changed_at[:10]
+        blocked_since = None
+        if status == "blocked":
+            blocked_since = entered_blocked
+        result.append(normalize_item(item.model_copy(update={"status": status, "blocked_since": blocked_since})))
+    return result
+
+
 def build_snapshot(
     tracker: Tracker,
     code_host: CodeHost,
@@ -131,15 +162,27 @@ def build_snapshot(
 
     taken_at defaults to now (UTC, ISO 8601) if not given explicitly; two
     calls a moment apart naturally get two different values, which is
-    what lets two consecutive snapshots be told apart once persisted."""
+what lets two consecutive snapshots be told apart once persisted.
+
+    A snapshot shows the project as it was at taken_at, not as it is now:
+    items, commits, channel messages and commitments dated after taken_at
+    are left out, and an item that changed since is rebuilt at the status
+    it then held (see _items_as_of). For a snapshot of the present none of
+    this changes anything. Not reconstructable, because the tracker keeps
+    no history for them: an item's assignee and sprint, and a risk's status
+    -- those are read as they are now, though a risk whose item did not yet
+    exist is dropped."""
     taken_at = taken_at or _now_iso()
-    items = [normalize_item(item) for item in tracker.list_items()]
-    commits = code_host.list_commits()
+    moment = parse_moment(taken_at)
+    items = _items_as_of(tracker, tracker.list_items(), moment)
+    commits = [c for c in code_host.list_commits() if parse_moment(c.committed_at) <= moment]
     message_page = teams_reader.list_messages(channel_id)
-    channel = ChannelSnapshot(channel_id=channel_id, messages=message_page.messages)
+    messages = [m for m in message_page.messages if parse_moment(m.posted_at) <= moment]
+    channel = ChannelSnapshot(channel_id=channel_id, messages=messages)
     sprints = tracker.list_sprints()
-    commitments = commitments_store.list_commitments()
-    risks = risk_log.list_risks()
+    commitments = [c for c in commitments_store.list_commitments() if parse_moment(c.made_at) <= moment]
+    existing_items = {item.id for item in items}
+    risks = [r for r in risk_log.list_risks() if r.related_item_id is None or r.related_item_id in existing_items]
     roster = tracker.list_assignees()
     return ProjectSnapshot(
         taken_at=taken_at,
