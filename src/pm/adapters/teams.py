@@ -75,7 +75,8 @@ def get_teams_publisher(log_path: str | Path | None = None) -> TeamsPublisher:
     data/outbound_log.jsonl (or log_path, or TEAMS_PUBLISHER_LOG_PATH) so each
     repo keeps its own inspectable outbound log; "power_automate" is P1's
     PowerAutomateTeamsPublisher against POWER_AUTOMATE_FLOW_URL. Choosing the
-    real one does not by itself allow a post -- see pm.delivery.brief_delivery."""
+    real one does not by itself allow a post: nothing is posted except through
+    an approved proposal (pm.approval.service)."""
     mode = os.environ.get("TEAMS_PUBLISHER_MODE", "mock")
 
     if mode == "mock":

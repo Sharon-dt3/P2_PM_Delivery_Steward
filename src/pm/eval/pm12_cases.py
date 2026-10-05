@@ -60,7 +60,7 @@ from pm.adapters.commitments import CommitmentsMock
 from pm.adapters.risk_log import RiskLogMock
 from pm.adapters.teams import get_teams_reader
 from pm.adapters.tracker import TrackerMock
-from pm.delivery.brief_delivery import DeliveryPolicy
+from pm.approval.service import ApprovalPolicy, approve_and_send
 from pm.eval.golden_cases import MORNING
 from pm.reporting.facts import (
     MorningBriefFacts,
@@ -529,8 +529,9 @@ def _with_commit_only_person(facts: MorningBriefFacts) -> MorningBriefFacts:
 
 
 def _posted_message_problems() -> list[str]:
-    """Run the real scheduled job into a log-only publisher and check the text
-    that would go to Teams: a dated title, then lines that are the brief's own."""
+    """Run the real scheduled job and the real approval service into a log-only
+    publisher, and check the text that would go to Teams: nothing before
+    approval, then a dated title and lines that are the brief's own."""
     from p1.adapters.teams_publisher_mock import LogPublisher
     from spine.storage.db import run_migrations
 
@@ -551,13 +552,18 @@ def _posted_message_problems() -> list[str]:
         finally:
             conn.close()
         log = LogPublisher(Path(tmp) / "log.jsonl")
-        result = run_morning_brief_job(
-            config, ScriptedGateway(), moment=moment, db_path=db_path, publisher=log, policy=DeliveryPolicy()
+        result = run_morning_brief_job(config, ScriptedGateway(), moment=moment, db_path=db_path)
+        posted_before_approval = len(log.read_log())
+        approve_and_send(
+            result.proposal_id, approver_id="eval.approver", publisher=log,
+            policy=ApprovalPolicy(approver_ids=frozenset({"eval.approver"})), db_path=db_path,
         )
         rows = log.read_log()
 
+    if posted_before_approval:
+        return ["posted message: something was posted before anyone approved it"]
     if len(rows) != 1:
-        return [f"posted message: expected exactly one post, got {len(rows)}"]
+        return [f"posted message: expected exactly one post after approval, got {len(rows)}"]
     posted = rows[0]["content"].split("\n")
     brief_lines = set(result.brief.content.split("\n"))
     problems = []

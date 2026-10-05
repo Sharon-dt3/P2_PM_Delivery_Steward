@@ -7,12 +7,11 @@ already demonstrates by hand, wrapped here so a real scheduler (or a
 clock-override demo) can drive it at the right moment instead of a human
 running the script.
 
-After generating the brief the job hands it to a Teams publisher chosen by
-configuration (see pm.delivery.brief_delivery): log-only by default, so
-nothing leaves the machine unless a real post is deliberately enabled and the
-channel is allowlisted. That is not the approval gate -- PM-13 ("Approval gate
-wired to the proposal spine") replaces the enabling switch with a proper
-approval. A failed delivery is reported in the result, never raised.
+After generating the brief the job PROPOSES it (pm.approval.proposals): one
+pending proposal per target channel per local day, and nothing is sent. A person
+approves, rejects or edits-then-approves it through pm.approval.service (a Teams
+card or scripts/approve.py), and only then is it posted -- through the publisher
+chosen by TEAMS_PUBLISHER_MODE, logged and audited. PM-13 is that gate.
 
 Mirrors p1.publishing.daily_job.run_daily_digest_job's own shape where
 it applies: `moment` defaults to "now" and a demo's clock override
@@ -38,15 +37,12 @@ from zoneinfo import ZoneInfo
 
 from spine.config.calendar import is_working_day
 
-from pm.adapters.teams import get_teams_publisher
-from pm.delivery.brief_delivery import (
+from pm.approval.proposals import (
+    ALREADY_PROPOSED,
     FAILED,
     NOT_ATTEMPTED,
-    DeliveryPolicy,
-    DeliveryResult,
-    deliver_brief,
-    format_brief_message,
-    load_delivery_policy,
+    PROPOSED,
+    propose_morning_brief,
 )
 from pm.jobs.snapshot_capture import capture_snapshot
 from pm.reporting.facts import compute_morning_brief_facts
@@ -65,8 +61,9 @@ class MorningBriefJobResult:
     status: str
     detail: str
     brief: MorningBrief | None = None
-    delivery_status: str = NOT_ATTEMPTED
+    delivery_status: str = NOT_ATTEMPTED  # proposed | already_proposed | failed | not_attempted
     delivery_detail: str = ""
+    proposal_id: str | None = None
 
 
 def run_morning_brief_job(
@@ -75,9 +72,6 @@ def run_morning_brief_job(
     *,
     moment: datetime | None = None,
     db_path: str | Path = DEFAULT_DB_PATH,
-    publisher=None,
-    policy: DeliveryPolicy | None = None,
-    redeliver: bool = False,
 ) -> MorningBriefJobResult:
     """Idempotent for a given `moment`: calling this twice for the exact
     same simulated (or, in production, real) instant reads back the
@@ -105,34 +99,28 @@ def run_morning_brief_job(
     facts = compute_morning_brief_facts(snapshot)
     brief = generate_morning_brief(facts, gateway)
 
-    delivery = _deliver(config, brief, local_day.isoformat(), publisher, policy, db_path, redeliver)
+    status, detail, proposal_id = _propose(config, brief, local_day.isoformat(), taken_at, db_path)
     return MorningBriefJobResult(
         channel_id=config.channel_id,
         taken_at=taken_at,
         status=GENERATED,
         detail="morning brief generated and grounded",
         brief=brief,
-        delivery_status=delivery.status,
-        delivery_detail=delivery.detail,
+        delivery_status=status,
+        delivery_detail=detail,
+        proposal_id=proposal_id,
     )
 
 
-def _deliver(config, brief, local_date, publisher, policy, db_path, redeliver):
-    """Hand the finished brief to the publisher. Resolving the publisher or
-    the policy can itself fail (a real mode with no flow URL, say); that is a
-    failed delivery, not a crashed job -- the brief is already made."""
+def _propose(config, brief, local_date, taken_at, db_path):
+    """Put the finished brief up for approval. A failure here is reported, not
+    raised: the brief is already made."""
     try:
-        publisher = publisher if publisher is not None else get_teams_publisher()
-        policy = policy if policy is not None else load_delivery_policy()
-    except Exception as exc:  # noqa: BLE001 - a misconfigured publisher fails the delivery, not the job
-        return DeliveryResult(FAILED, f"{type(exc).__name__}: {exc}")
-    return deliver_brief(
-        format_brief_message(config.message_label, local_date, brief.content),
-        kind="morning_brief",
-        target_channel_id=config.publish_channel_id or config.channel_id,
-        local_date=local_date,
-        publisher=publisher,
-        policy=policy,
-        db_path=db_path,
-        redeliver=redeliver,
-    )
+        proposal, created = propose_morning_brief(
+            brief, config, local_date=local_date, taken_at=taken_at, db_path=db_path
+        )
+    except Exception as exc:  # noqa: BLE001 - a failed proposal must not take the scheduled job down
+        return FAILED, f"{type(exc).__name__}: {exc}", None
+    if created:
+        return PROPOSED, f"awaiting approval (proposal {proposal.id})", proposal.id
+    return ALREADY_PROPOSED, f"a proposal for {local_date} already exists (status {proposal.status})", proposal.id

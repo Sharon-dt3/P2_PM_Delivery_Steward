@@ -149,10 +149,10 @@ def test_the_text_posted_to_teams_adds_nothing_to_the_brief(facts):
 
 
 def test_a_posted_message_with_an_extra_line_is_flagged(monkeypatch):
-    from pm.jobs import morning_brief_job
+    from pm.approval import proposals
 
-    real = morning_brief_job.format_brief_message
-    monkeypatch.setattr(morning_brief_job, "format_brief_message", lambda *a, **k: real(*a, **k) + "\nAlso: the team loves it.")
+    real = proposals.format_brief_message
+    monkeypatch.setattr(proposals, "format_brief_message", lambda *a, **k: real(*a, **k) + "\nAlso: the team loves it.")
 
     assert pm12_cases._posted_message_problems()
 
