@@ -35,12 +35,6 @@ from pm.adapters.tracker import Tracker, TransitionRecord
 from pm.seed.build import CANONICAL_STATUSES
 from pm.state.snapshot import UNMAPPED, ProjectSnapshot
 
-# The status every item starts in before its first recorded transition --
-# this repo's own seeding convention (pm.seed.build._history()'s prev_status
-# starts here; the two items with zero transitions at all, PM-013 and
-# PM-021, are seeded directly in this status and never leave it).
-INITIAL_STATUS = "backlog"
-
 ADDED = "added"
 REMOVED = "removed"
 STATUS_CHANGED = "status_changed"
@@ -54,6 +48,10 @@ class ItemDelta(BaseModel):
     before_status: str | None = None
     after_status: str | None = None
     transitions_in_window: int = 0
+    # Set only when the item's owner differs between the two snapshots, on
+    # any kind of delta: a status change or a flap can also be a handover.
+    before_assignee: str | None = None
+    after_assignee: str | None = None
     description: str
 
 
@@ -86,21 +84,18 @@ def _normalize(status: str) -> str:
     return status if status in CANONICAL_STATUSES else UNMAPPED
 
 
-def _status_as_of(history: list[TransitionRecord], moment: datetime) -> tuple[str, int]:
-    """The item's status as of `moment`, reconstructed from its full
-    transition history: the to_status of the last transition at or before
-    moment, or INITIAL_STATUS if none has happened yet (or ever). Also
-    returns how many transitions in `history` fall strictly after moment
-    up to nothing in particular -- callers pass two moments and take the
-    count between them separately; this helper only resolves a single
-    point-in-time status."""
-    status = INITIAL_STATUS
-    count_at_or_before = 0
+def _status_as_of(history: list[TransitionRecord], moment: datetime, *, fallback: str) -> str:
+    """The item's status as of `moment`, reconstructed from its transition
+    history: the to_status of the last transition at or before moment.
+    Before its first transition an item is in that transition's own
+    from_status -- whatever status it was actually created in, not an
+    assumed default. An item with no transitions at all has only ever had
+    one status, the one its snapshot recorded (`fallback`)."""
+    status = history[0].from_status if history else fallback
     for record in history:
         if _parse_moment(record.changed_at) <= moment:
             status = record.to_status
-            count_at_or_before += 1
-    return status, count_at_or_before
+    return status
 
 
 def compute_delta(before: ProjectSnapshot, after: ProjectSnapshot, tracker: Tracker) -> SnapshotDelta:
@@ -145,15 +140,39 @@ def compute_delta(before: ProjectSnapshot, after: ProjectSnapshot, tracker: Trac
 
     for item_id in sorted(before_ids & after_ids):
         history = tracker.list_transitions(item_id)
-        before_status, _ = _status_as_of(history, window_start)
-        after_status, _ = _status_as_of(history, window_end)
-        before_status = _normalize(before_status)
-        after_status = _normalize(after_status)
+        before_item = before_by_id[item_id]
+        after_item = after_by_id[item_id]
+        before_status = _normalize(_status_as_of(history, window_start, fallback=before_item.status))
+        after_status = _normalize(_status_as_of(history, window_end, fallback=after_item.status))
         in_window = [
             record for record in history if window_start < _parse_moment(record.changed_at) <= window_end
         ]
+        path = " -> ".join([in_window[0].from_status] + [record.to_status for record in in_window]) if in_window else ""
+
+        # An owner change is reported on whatever kind of delta the item
+        # gets (still one entry per item), never dropped because the status
+        # moved as well.
+        reassigned = before_item.assignee_id != after_item.assignee_id
+        owner = (
+            {"before_assignee": before_item.assignee_id, "after_assignee": after_item.assignee_id}
+            if reassigned
+            else {}
+        )
+        owner_note = (
+            f" It was also reassigned from {before_item.assignee_id!r} to {after_item.assignee_id!r}."
+            if reassigned
+            else ""
+        )
 
         if before_status != after_status:
+            # More than one transition means it bounced on the way: say so,
+            # with the actual path, rather than presenting it as a single move.
+            moved = f"{item_id} moved from {before_status} to {after_status}"
+            description = (
+                f"{moved} after {len(in_window)} transitions in the window ({path})."
+                if len(in_window) > 1
+                else f"{moved}."
+            )
             deltas.append(
                 ItemDelta(
                     item_id=item_id,
@@ -161,7 +180,8 @@ def compute_delta(before: ProjectSnapshot, after: ProjectSnapshot, tracker: Trac
                     before_status=before_status,
                     after_status=after_status,
                     transitions_in_window=len(in_window),
-                    description=f"{item_id} moved from {before_status} to {after_status}.",
+                    description=description + owner_note,
+                    **owner,
                 )
             )
             continue
@@ -171,7 +191,6 @@ def compute_delta(before: ProjectSnapshot, after: ProjectSnapshot, tracker: Trac
             # window -- PM-016's own planted difficulty. Reported once,
             # not once per transition row, with the actual path so the
             # churn is legible rather than just asserted.
-            path = " -> ".join([in_window[0].from_status] + [record.to_status for record in in_window])
             deltas.append(
                 ItemDelta(
                     item_id=item_id,
@@ -181,15 +200,14 @@ def compute_delta(before: ProjectSnapshot, after: ProjectSnapshot, tracker: Trac
                     transitions_in_window=len(in_window),
                     description=(
                         f"{item_id} churned ({path}) and ended back at {after_status} -- "
-                        "net status unchanged, but it was not quiet."
+                        "net status unchanged, but it was not quiet." + owner_note
                     ),
+                    **owner,
                 )
             )
             continue
 
-        before_item = before_by_id[item_id]
-        after_item = after_by_id[item_id]
-        if before_item.assignee_id != after_item.assignee_id:
+        if reassigned:
             deltas.append(
                 ItemDelta(
                     item_id=item_id,
@@ -197,6 +215,7 @@ def compute_delta(before: ProjectSnapshot, after: ProjectSnapshot, tracker: Trac
                     before_status=before_status,
                     after_status=after_status,
                     description=f"{item_id} reassigned from {before_item.assignee_id!r} to {after_item.assignee_id!r}.",
+                    **owner,
                 )
             )
 

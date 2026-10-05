@@ -141,7 +141,7 @@ def test_a_window_predating_pm016s_first_move_is_a_real_status_change(seeded_db_
     """The other side of the same coin: widen the window enough to
     predate PM-016's very first transition (backlog -> in_progress on
     2026-09-15) and the net change is real, not a flap -- reconstruction
-    from INITIAL_STATUS, not an assumption baked into the test."""
+    from the first transition's own from_status, not an assumption baked into the test."""
     tracker = TrackerMock(db_path=seeded_db_path)
     before = _snapshot(seeded_db_path, "2026-09-10T00:00:00+00:00")
     after = _snapshot(seeded_db_path, "2026-09-20T00:00:00+00:00")
@@ -162,3 +162,128 @@ def test_an_empty_window_before_any_transitions_has_no_deltas(seeded_db_path):
 
     delta = compute_delta(before, after, tracker)
     assert delta.items == []
+
+
+# --- three accuracy gaps found by probing the engine with synthetic items ---
+
+
+def _add_item(db_path, item_id, status, assignee, transitions):
+    """A synthetic item with an explicit transition history, inserted
+    straight into the seeded database before any snapshot is built."""
+    import sqlite3
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO items (id, title, status, sprint_id, assignee_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (item_id, item_id, status, "sprint-13", assignee, "2026-09-10"),
+        )
+        conn.executemany(
+            "INSERT INTO item_transitions (item_id, from_status, to_status, changed_at) VALUES (?, ?, ?, ?)",
+            [(item_id, *step) for step in transitions],
+        )
+
+
+def _delta_between_snapshots_with_a_change(db_path, change_sql=None, params=()):
+    """Morning snapshot, then (optionally) one change to the tracker, then
+    the end-of-day snapshot -- so the two snapshots really differ."""
+    import sqlite3
+
+    tracker = TrackerMock(db_path=db_path)
+    before = _snapshot(db_path, MORNING)
+    if change_sql:
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(change_sql, params)
+    after = _snapshot(db_path, END_OF_DAY)
+    return {item.item_id: item for item in compute_delta(before, after, tracker).items}
+
+
+def test_an_item_created_in_a_status_other_than_backlog_reports_its_real_starting_status(seeded_db_path):
+    """The engine used to assume every item starts in backlog, so an item
+    created directly in in_progress and finished in the window was reported
+    as moving "from backlog to done"."""
+    _add_item(seeded_db_path, "X-INITIAL", "done", "wei.chen", [("in_progress", "done", "2026-09-16T10:00:00")])
+
+    item = _delta_between_snapshots_with_a_change(seeded_db_path)["X-INITIAL"]
+
+    assert item.kind == STATUS_CHANGED
+    assert (item.before_status, item.after_status) == ("in_progress", "done")
+    assert item.description == "X-INITIAL moved from in_progress to done."
+
+
+def test_a_status_change_that_is_also_a_reassignment_reports_both(seeded_db_path):
+    """The reassignment used to be dropped whenever the status also changed."""
+    _add_item(seeded_db_path, "X-BOTH", "in_progress", "wei.chen", [
+        ("backlog", "in_progress", "2026-09-14"),
+        ("in_progress", "done", "2026-09-16T10:00:00"),
+    ])
+
+    item = _delta_between_snapshots_with_a_change(
+        seeded_db_path, "UPDATE items SET assignee_id = ?, status = 'done' WHERE id = ?", ("noah.becker", "X-BOTH")
+    )["X-BOTH"]
+
+    assert item.kind == STATUS_CHANGED
+    assert (item.before_assignee, item.after_assignee) == ("wei.chen", "noah.becker")
+    assert "moved from in_progress to done" in item.description
+    assert "reassigned from 'wei.chen' to 'noah.becker'" in item.description
+
+
+def test_a_flap_that_is_also_a_reassignment_reports_both_and_still_appears_once(seeded_db_path):
+    import sqlite3
+
+    with sqlite3.connect(seeded_db_path) as conn:
+        original_owner = conn.execute("SELECT assignee_id FROM items WHERE id = 'PM-016'").fetchone()[0]
+    new_owner = "noah.becker" if original_owner != "noah.becker" else "wei.chen"
+
+    delta = _delta_between_snapshots_with_a_change(
+        seeded_db_path, "UPDATE items SET assignee_id = ? WHERE id = ?", (new_owner, "PM-016")
+    )
+
+    assert [i for i in delta if i == "PM-016"] == ["PM-016"]
+    item = delta["PM-016"]
+    assert item.kind == FLAPPED
+    assert (item.before_assignee, item.after_assignee) == (original_owner, new_owner)
+    assert "churned (in_progress -> done -> in_progress)" in item.description
+    assert f"reassigned from {original_owner!r} to {new_owner!r}" in item.description
+
+
+def test_a_pure_reassignment_is_still_reported_as_one(seeded_db_path):
+    delta = _delta_between_snapshots_with_a_change(
+        seeded_db_path, "UPDATE items SET assignee_id = 'noah.becker' WHERE id = 'PM-001'"
+    )
+
+    item = delta["PM-001"]
+    assert item.kind == "reassigned"
+    assert item.after_assignee == "noah.becker"
+
+
+def test_churn_that_ends_in_a_different_status_says_so_in_its_description(seeded_db_path):
+    """in_progress -> done -> in_progress -> in_review used to be reported
+    as a plain move from in_progress to in_review, with the bounce through
+    done invisible in the description."""
+    _add_item(seeded_db_path, "X-CHURN", "in_review", "wei.chen", [
+        ("backlog", "in_progress", "2026-09-14"),
+        ("in_progress", "done", "2026-09-16T09:00:00"),
+        ("done", "in_progress", "2026-09-16T10:00:00"),
+        ("in_progress", "in_review", "2026-09-16T11:00:00"),
+    ])
+
+    item = _delta_between_snapshots_with_a_change(seeded_db_path)["X-CHURN"]
+
+    assert item.kind == STATUS_CHANGED
+    assert (item.before_status, item.after_status) == ("in_progress", "in_review")
+    assert item.transitions_in_window == 3
+    assert "3 transitions" in item.description
+    assert "in_progress -> done -> in_progress -> in_review" in item.description
+
+
+def test_the_plain_single_move_descriptions_are_unchanged(seeded_db_path):
+    """Guard: the fixes only add information where there was a gap."""
+    delta = _delta_between_snapshots_with_a_change(seeded_db_path)
+
+    assert delta["PM-018"].description == "PM-018 moved from in_progress to in_review."
+    assert delta["PM-020"].description == "PM-020 moved from backlog to in_progress."
+    assert delta["PM-016"].description == (
+        "PM-016 churned (in_progress -> done -> in_progress) and ended back at in_progress -- "
+        "net status unchanged, but it was not quiet."
+    )
+    assert delta["PM-018"].before_assignee is None and delta["PM-018"].after_assignee is None
