@@ -1,0 +1,4 @@
+id,title,description,severity,status,related_item_id,opened_at
+RISK-001,Auth flow token refresh intermittent failures in staging,Token refresh calls are failing intermittently under load in the staging environment; root cause not yet confirmed.,medium,open,PM-023,2026-09-10
+RISK-002,Billing sync nightly job at risk of missing SLA,The nightly billing sync job has been running past its committed SLA window twice this sprint; vendor-side latency suspected.,high,open,PM-024,2026-09-11
+RISK-003,Third-party billing API rate limits may throttle nightly sync during peak season,Flagged during Sprint 12 planning; mitigated by moving the sync off-peak. No currently-open blocker traces back to this.,low,mitigated,,2026-08-20

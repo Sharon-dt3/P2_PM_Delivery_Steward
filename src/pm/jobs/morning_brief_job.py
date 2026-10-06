@@ -58,6 +58,7 @@ from pm.jobs.snapshot_capture import capture_snapshot
 from pm.mirror.hook import mirrored
 from pm.reporting.facts import compute_morning_brief_facts
 from pm.reporting.morning_brief import MorningBrief, generate_morning_brief
+from pm.risklog.hook import pull_lead_edits_if_enabled
 from pm.scheduling.config import ProjectScheduleConfig
 from pm.storage.db import DEFAULT_DB_PATH
 
@@ -75,6 +76,7 @@ class MorningBriefJobResult:
     delivery_status: str = NOT_ATTEMPTED  # proposed | already_proposed | failed | not_attempted
     delivery_detail: str = ""
     proposal_id: str | None = None
+    risk_log_sync: str = ""  # off | skipped | error | in_sync | pushed | pulled | conflict | ...
 
 
 @mirrored
@@ -107,6 +109,7 @@ def run_morning_brief_job(
             detail="not a working day for this project",
         )
 
+    risk_log_sync = pull_lead_edits_if_enabled(db_path)  # the lead's risk-log edits, before the brief
     taken_at = resolved_moment.isoformat()
     snapshot = capture_snapshot(config, resolved_moment, db_path=db_path)
 
@@ -123,6 +126,7 @@ def run_morning_brief_job(
         delivery_status=status,
         delivery_detail=detail,
         proposal_id=proposal_id,
+        risk_log_sync=risk_log_sync,
     )
 
 

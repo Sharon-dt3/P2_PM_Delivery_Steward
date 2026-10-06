@@ -10,3 +10,6 @@ data/*.db-shm
 data/*.jsonl
 /outcomes/
 .env
+
+# The risk log sync remembers the last state both sides agreed on (local state, not repo content)
+data/risk_log_baseline.json

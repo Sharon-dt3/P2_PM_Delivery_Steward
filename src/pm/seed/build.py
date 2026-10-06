@@ -354,11 +354,12 @@ COMMITMENTS = [
 # PM-014/PM-015's own comment above for the item side of that gap.
 # ---------------------------------------------------------------------------
 
-RISKS = [
-    {"id": "RISK-001", "title": "Auth flow token refresh intermittent failures in staging", "description": "Token refresh calls are failing intermittently under load in the staging environment; root cause not yet confirmed.", "severity": "medium", "status": "open", "related_item_id": "PM-023", "opened_at": "2026-09-10"},
-    {"id": "RISK-002", "title": "Billing sync nightly job at risk of missing SLA", "description": "The nightly billing sync job has been running past its committed SLA window twice this sprint; vendor-side latency suspected.", "severity": "high", "status": "open", "related_item_id": "PM-024", "opened_at": "2026-09-11"},
-    {"id": "RISK-003", "title": "Third-party billing API rate limits may throttle nightly sync during peak season", "description": "Flagged during Sprint 12 planning; mitigated by moving the sync off-peak. No currently-open blocker traces back to this.", "severity": "low", "status": "mitigated", "related_item_id": None, "opened_at": "2026-08-20"},
-]
+# The risk log's system of record is the committed CSV, risk_log/risks.csv (PM-15): the
+# seed loads it, so a fresh database always starts from exactly what the repo says.
+# Edit that file (or the lead-facing table synced with it), not a list in this module.
+from pm.risklog.csv_store import DEFAULT_CSV_PATH, read_risks
+
+RISKS = [risk.model_dump() for risk in read_risks(DEFAULT_CSV_PATH)]
 
 
 def build_seed(conn: sqlite3.Connection) -> None:
