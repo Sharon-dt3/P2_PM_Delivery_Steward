@@ -30,8 +30,11 @@ _P1_REPO_ROOT = _REPO_ROOT.parent / "P3_Agents"
 for _path in (_REPO_ROOT / "src", _P1_REPO_ROOT / "src", _REPO_ROOT / "packages" / "spine" / "src"):
     sys.path.insert(0, str(_path))
 
+from spine.approval.proposals import ProposalStore
+
+from pm.risk import memory
 from pm.risk.gaps import current_blockers, find_gaps
-from pm.risk.proposals import detect_and_propose
+from pm.risk.proposals import detect_and_propose, recall_for
 from pm.state.snapshot import build_current_snapshot
 from pm.storage.db import DEFAULT_DB_PATH
 
@@ -44,6 +47,18 @@ def _gateway(kind: str, gaps):
     from spine.llm.gateway import LLMGateway
 
     return LLMGateway()
+
+
+def _remembered(recalled) -> str:
+    """What the rejection memory says about a blocker, in words."""
+    prior = recalled.proposal.id[:8] if recalled.proposal else ""
+    return {
+        memory.NEW: "new: would be proposed",
+        memory.ALREADY_PROPOSED: f"already proposed (proposal {prior}), still open",
+        memory.REJECTED_UNCHANGED: f"rejected earlier (proposal {prior}), nothing material changed: not proposed again",
+        memory.AWAITING_DECISION: f"an earlier proposal ({prior}) is still awaiting a decision: not proposed again",
+        memory.CHANGED_SINCE_REJECTION: f"rejected earlier (proposal {prior}) but changed since: would be proposed again",
+    }[recalled.state]
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -72,18 +87,26 @@ def main(argv: list[str] | None = None) -> int:
         for gap in gaps:
             owner = gap.owner.name if gap.owner else "no owner evidenced"
             print(f"  {gap.item_id}  {gap.title}  (owner: {owner}; {gap.reference})")
+            print(f"      {_remembered(recall_for(gap, db_path=args.db))}")
         print("Dry run: nothing was proposed.")
         return 0
 
     results = detect_and_propose(snapshot, _gateway(args.gateway, gaps), db_path=args.db)
+    store = ProposalStore(args.db)
     for r in results:
-        state = "proposed" if r.created else "already proposed"
-        prose = "/".join(f"{k}:{v}" for k, v in r.prose_source.items())
-        print(f"  {r.item_id}  {state}  (proposal {r.proposal_id[:8]}, prose {prose})")
+        if r.created:
+            again = r.state == memory.CHANGED_SINCE_REJECTION
+            prose = "/".join(f"{k}:{v}" for k, v in r.prose_source.items())
+            print(f"  {r.item_id}  {'proposed again, changed since it was rejected' if again else 'proposed'}"
+                  f"  (proposal {r.proposal_id[:8]}, prose {prose})")
+            if again:
+                print(f"      {store.get(r.proposal_id).payload['change']['text']}")
+        else:
+            print(f"  {r.item_id}  {_remembered(memory.Memory(r.state, store.get(r.proposal_id)))}")
     if any(r.created for r in results):
         print("Waiting for a person: uv run python scripts/approve.py list")
     elif results:
-        print("Nothing new: every missing blocker was already proposed.")
+        print("Nothing new proposed.")
     return 0
 
 

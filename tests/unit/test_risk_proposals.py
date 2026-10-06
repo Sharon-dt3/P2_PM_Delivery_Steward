@@ -297,6 +297,8 @@ def test_a_blocker_a_person_rejected_is_not_proposed_again(seeded_db_path, snaps
 
 def test_a_new_blockage_of_the_same_item_is_a_new_proposal(seeded_db_path, snapshot):
     _run(seeded_db_path, snapshot)
+    reject(_by_item(seeded_db_path)["PM-014"].id, approver_id="sharon.silva", reason="cleared",
+           policy=ApprovalPolicy(approver_ids=frozenset({"sharon.silva"})), db_path=seeded_db_path)  # (PM-17) the old one is decided
     moved = snapshot.model_copy(update={"items": [
         i.model_copy(update={"blocked_since": "2026-09-18"}) if i.id == "PM-014" else i for i in snapshot.items
     ]})
