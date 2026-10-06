@@ -50,6 +50,7 @@ from spine.eval.cases import GoldenCaseRegistry
 from spine.eval.runner import run_eval
 from spine.prompts.registry import PromptRegistry
 
+from pm.eval.pm18_cases import report as gc4_report
 from pm.eval.registrations import register_all
 from pm.eval.runner import main as print_golden_case_3
 
@@ -77,6 +78,8 @@ def main() -> int:
 
     print_golden_case_3()
     print()
+    print(gc4_report())
+    print()
 
     registry = GoldenCaseRegistry()
     if args.live_ollama:
@@ -100,6 +103,7 @@ def main() -> int:
         prompt_versions={name: prompts.get(name).version for name in prompts.list_capabilities()},
         results_path=RESULTS_PATH,
         extra=code_revision(),
+        out=sys.stdout,  # looked up now, not when the harness was imported
     )
     return 0 if summary.all_passed else 1
 
