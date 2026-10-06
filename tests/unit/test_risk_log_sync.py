@@ -23,7 +23,7 @@ from datetime import datetime, time, timezone
 import pytest
 
 from pm.adapters.risk_log import Risk, RiskLogMock, RiskLogStore
-from pm.risklog.csv_store import DEFAULT_CSV_PATH, CsvRiskLog, read_risks, write_risks
+from pm.risklog.csv_store import CsvRiskLog, read_risks, write_risks
 from pm.risklog.remote import RemoteUnavailableError
 from pm.risklog.sync import (
     CONFLICT,
@@ -35,8 +35,9 @@ from pm.risklog.sync import (
     REMOTE_UNREACHABLE,
     RiskLogSync,
 )
+from pm.seed.build import SEED_RISK_LOG_PATH
 
-SEEDED = read_risks(DEFAULT_CSV_PATH)
+SEEDED = read_risks(SEED_RISK_LOG_PATH)
 
 
 class InMemoryRemote(RiskLogStore):

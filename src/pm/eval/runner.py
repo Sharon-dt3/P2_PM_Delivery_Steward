@@ -33,7 +33,6 @@ from pm.eval.golden_cases import END_OF_DAY, GOLDEN_CASE_3, MORNING, HandLabel
 from pm.seed.build import CHANNEL_ID
 from pm.state.diff import SnapshotDelta, compute_delta
 from pm.state.snapshot import build_snapshot
-from pm.storage.db import DEFAULT_DB_PATH
 
 
 class EvaluationResult(BaseModel):
@@ -48,8 +47,17 @@ def build_case_3_delta(db_path=None) -> SnapshotDelta:
     """Builds the two real snapshots bracketing golden case 3's window and
     returns the actual computed delta between them -- the thing being
     graded, built from this repo's own real adapters over its own real
-    seeded data, not a stand-in."""
-    resolved_db_path = db_path if db_path is not None else DEFAULT_DB_PATH
+    seeded data, not a stand-in. With no database given, a pristine one is built from the
+    frozen seed, so the grade never depends on what is in the developer's data/pm.db."""
+    if db_path is None:
+        import tempfile
+        from pathlib import Path
+
+        from pm.eval.pristine import build_pristine_database
+
+        with tempfile.TemporaryDirectory(prefix="pm_golden_") as tmp:
+            return build_case_3_delta(build_pristine_database(Path(tmp)))
+    resolved_db_path = db_path
     tracker = TrackerMock(db_path=resolved_db_path)
     code_host = CodeHostMock(db_path=resolved_db_path)
     teams_reader = get_teams_reader(db_path=resolved_db_path)

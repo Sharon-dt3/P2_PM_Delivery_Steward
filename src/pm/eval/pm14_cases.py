@@ -50,7 +50,7 @@ from pm.approval.service import ApprovalPolicy
 from pm.eval.pm12_cases import ScriptedGateway
 from pm.jobs.morning_brief_job import run_morning_brief_job
 from pm.scheduling.config import ProjectScheduleConfig
-from pm.seed.build import CHANNEL_ID, build_seed
+from pm.seed.build import CHANNEL_ID, RISKS, build_seed
 from pm.storage.db import MIGRATIONS_DIR, get_connection
 
 APPROVER = "gc6.approver"
@@ -88,7 +88,7 @@ class _World:
         run_migrations(self.db, MIGRATIONS_DIR)
         conn = get_connection(self.db)
         try:
-            build_seed(conn)
+            build_seed(conn, risks=RISKS)
         finally:
             conn.close()
         self.spy = _SpyPublisher(directory / "outbound.jsonl")

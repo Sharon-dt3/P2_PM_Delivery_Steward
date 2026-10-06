@@ -63,6 +63,7 @@ from pm.adapters.teams import get_teams_reader
 from pm.adapters.tracker import TrackerMock
 from pm.approval.service import AUTO_APPROVER, ApprovalPolicy, approve_and_send
 from pm.eval.golden_cases import MORNING
+from pm.eval.pristine import build_pristine_database
 from pm.reporting.facts import (
     MorningBriefFacts,
     PersonFacts,
@@ -80,9 +81,9 @@ from pm.reporting.morning_brief import (
     _section_facts,
     generate_morning_brief,
 )
-from pm.seed.build import CHANNEL_ID, build_seed
+from pm.seed.build import CHANNEL_ID, RISKS, build_seed
 from pm.state.snapshot import build_current_snapshot, build_snapshot
-from pm.storage.db import DEFAULT_DB_PATH, MIGRATIONS_DIR, get_connection
+from pm.storage.db import MIGRATIONS_DIR, get_connection
 
 GC1_TARGET = 0.90
 _ITEM_SECTIONS = ("committed", "delivered", "pending", "blocked")
@@ -94,8 +95,13 @@ _FACT_RE = re.compile(r"^\d+\. reference_id: (?P<ref>\S+)\n\s+detail: (?P<detail
 
 def build_seeded_facts(db_path: str | Path | None = None) -> MorningBriefFacts:
     """The real morning-brief facts over this repo's own seeded database,
-    as of golden case 3's MORNING moment (inside sprint-13)."""
-    path = db_path if db_path is not None else DEFAULT_DB_PATH
+    as of golden case 3's MORNING moment (inside sprint-13). With no database given, a
+    pristine one is built from the frozen seed: golden cases never read the developer's
+    data/pm.db, so their numbers do not move with whatever is in it."""
+    if db_path is None:
+        with tempfile.TemporaryDirectory(prefix="pm_golden_") as tmp:
+            return build_seeded_facts(build_pristine_database(Path(tmp)))
+    path = db_path
     snapshot = build_snapshot(
         TrackerMock(db_path=path),
         CodeHostMock(db_path=path),
@@ -549,7 +555,7 @@ def _posted_message_problems() -> list[str]:
         run_migrations(db_path, MIGRATIONS_DIR)
         conn = get_connection(db_path)
         try:
-            build_seed(conn)
+            build_seed(conn, risks=RISKS)
         finally:
             conn.close()
         log = LogPublisher(Path(tmp) / "log.jsonl")
@@ -597,7 +603,7 @@ def _auto_approve_problems() -> list[str]:
         run_migrations(db_path, MIGRATIONS_DIR)
         conn = get_connection(db_path)
         try:
-            build_seed(conn)
+            build_seed(conn, risks=RISKS)
         finally:
             conn.close()
         log = LogPublisher(Path(tmp) / "log.jsonl")

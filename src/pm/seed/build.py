@@ -354,20 +354,25 @@ COMMITMENTS = [
 # PM-014/PM-015's own comment above for the item side of that gap.
 # ---------------------------------------------------------------------------
 
-# The risk log's system of record is the committed CSV, risk_log/risks.csv (PM-15): the
-# seed loads it, so a fresh database always starts from exactly what the repo says.
-# Edit that file (or the lead-facing table synced with it), not a list in this module.
-from pm.risklog.csv_store import DEFAULT_CSV_PATH, read_risks
+# The risk log (PM-15). Its live system of record is the committed CSV, risk_log/risks.csv,
+# which the delivery lead edits through the lead-facing table: real runs (scripts/seed.py,
+# build_seed() with no argument) load THAT. RISKS below is the frozen original three, kept
+# as a fixture so tests and golden cases never depend on today's edits.
+from pm.risklog.csv_store import live_risk_log_path, read_risks
 
-RISKS = [risk.model_dump() for risk in read_risks(DEFAULT_CSV_PATH)]
+SEED_RISK_LOG_PATH = Path(__file__).parent / "fixtures" / "risk_log_seed.csv"
+RISKS = [risk.model_dump() for risk in read_risks(SEED_RISK_LOG_PATH)]
 
 
-def build_seed(conn: sqlite3.Connection) -> None:
+def build_seed(conn: sqlite3.Connection, risks: list[dict] | None = None) -> None:
     """Resets and repopulates every seeded table from the static data
     above. Safe to call any number of times -- each call clears the
     tables first, so re-running always lands on the exact same rows
     (the "reproducible" half of D11's own DoD line), the same posture
-    P1's own write_outcome() takes toward re-running being safe."""
+    P1's own write_outcome() takes toward re-running being safe.
+
+    `risks` is the risk log to load; None means the live log (risk_log/risks.csv, or
+    PM_RISK_LOG_CSV), pass RISKS for the frozen original three."""
     conn.execute("PRAGMA foreign_keys = OFF")  # so the DELETE order below doesn't have to respect FKs
     for table in ("item_comments", "item_transitions", "commitments", "commits", "risks", "items", "assignees", "sprints"):
         conn.execute(f"DELETE FROM {table}")
@@ -412,7 +417,7 @@ def build_seed(conn: sqlite3.Connection) -> None:
     )
     conn.executemany(
         "INSERT INTO risks (id, title, description, severity, status, related_item_id, opened_at) VALUES (:id, :title, :description, :severity, :status, :related_item_id, :opened_at)",
-        RISKS,
+        [risk.model_dump() for risk in read_risks(live_risk_log_path())] if risks is None else risks,
     )
     conn.commit()
 

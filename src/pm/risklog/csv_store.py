@@ -23,7 +23,16 @@ from pm.adapters.risk_log import (
     RiskNotFoundError,
 )
 
-DEFAULT_CSV_PATH = Path(__file__).resolve().parents[3] / "risk_log" / "risks.csv"
+_REPO_LOG = Path(__file__).resolve().parents[3] / "risk_log" / "risks.csv"
+
+
+def live_risk_log_path() -> Path:
+    """The risk log real runs use: risk_log/risks.csv, or PM_RISK_LOG_CSV when set (the
+    test suite points it at a frozen copy so a lead's edits never break the tests)."""
+    return Path(os.environ.get("PM_RISK_LOG_CSV") or _REPO_LOG)
+
+
+DEFAULT_CSV_PATH = live_risk_log_path()  # as resolved at import; code that must follow the setting calls live_risk_log_path()
 COLUMNS = ["id", "title", "description", "severity", "status", "related_item_id", "opened_at"]
 SEVERITIES = ("low", "medium", "high")
 STATUSES = ("open", "mitigated", "closed")
@@ -116,8 +125,8 @@ def write_risks(path: str | Path, risks: list[Risk]) -> None:
 
 
 class CsvRiskLog(RiskLogStore):
-    def __init__(self, path: str | Path = DEFAULT_CSV_PATH) -> None:
-        self._path = Path(path)
+    def __init__(self, path: str | Path | None = None) -> None:
+        self._path = Path(path) if path is not None else live_risk_log_path()
 
     def list_risks(self) -> list[Risk]:
         return read_risks(self._path)

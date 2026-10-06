@@ -36,7 +36,7 @@ for _path in (_REPO_ROOT / "src", _P1_REPO_ROOT / "src", _REPO_ROOT / "packages"
     sys.path.insert(0, str(_path))
 
 from pm.mirror.supabase_mirror import _scrub
-from pm.risklog.csv_store import DEFAULT_CSV_PATH, CsvRiskLog, RiskLogDataError
+from pm.risklog.csv_store import CsvRiskLog, RiskLogDataError, live_risk_log_path
 from pm.risklog.supabase_store import SupabaseRiskLog
 from pm.risklog.sync import (
     CONFLICT,
@@ -60,13 +60,13 @@ def _print_show(csv: CsvRiskLog) -> None:
     print(f"{'id':9} {'severity':8} {'status':9} {'item':7} {'opened':10}  title")
     for r in risks:
         print(f"{r.id:9} {r.severity:8} {r.status:9} {(r.related_item_id or '-'):7} {r.opened_at:10}  {r.title}")
-    print(f"\n{len(risks)} risk(s). Source: {DEFAULT_CSV_PATH if csv._path == DEFAULT_CSV_PATH else csv._path}")
+    print(f"\n{len(risks)} risk(s). Source: {csv._path}")
 
 
 def main(argv: list[str] | None = None, *, remote=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--db", default=str(DEFAULT_DB_PATH))
-    parser.add_argument("--csv", default=str(DEFAULT_CSV_PATH))
+    parser.add_argument("--csv", default=str(live_risk_log_path()))
     parser.add_argument("--baseline", default=os.environ.get("PM_RISK_LOG_BASELINE") or str(DEFAULT_BASELINE_PATH))
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("show")

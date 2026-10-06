@@ -1,5 +1,15 @@
 from __future__ import annotations
 
+import os
+from pathlib import Path as _Path
+
+# The live risk log (risk_log/risks.csv) is data the delivery lead edits; tests run against
+# the frozen original three so a legitimate edit can never break the suite. This must be set
+# before anything imports pm.
+os.environ["PM_RISK_LOG_CSV"] = str(
+    _Path(__file__).resolve().parents[2] / "src" / "pm" / "seed" / "fixtures" / "risk_log_seed.csv"
+)
+
 import sqlite3
 from collections.abc import Iterator
 from pathlib import Path

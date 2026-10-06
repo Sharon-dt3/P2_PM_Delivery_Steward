@@ -15,13 +15,13 @@ import pytest
 from pm.adapters.risk_log import DuplicateRiskError, Risk, RiskNotFoundError
 from pm.risklog.csv_store import (
     COLUMNS,
-    DEFAULT_CSV_PATH,
     CsvRiskLog,
     RiskLogDataError,
     read_risks,
     validate_risks,
     write_risks,
 )
+from pm.seed.build import SEED_RISK_LOG_PATH
 
 SEEDED = [
     Risk(id="RISK-001", title="Auth flow token refresh intermittent failures in staging",
@@ -45,12 +45,12 @@ def _risk(**changes):
 # --- the committed file ------------------------------------------------------------------------------------
 
 
-def test_the_committed_csv_holds_exactly_the_three_seeded_risks():
-    assert read_risks(DEFAULT_CSV_PATH) == SEEDED
+def test_the_frozen_seed_holds_exactly_the_three_seeded_risks():
+    assert read_risks(SEED_RISK_LOG_PATH) == SEEDED
 
 
 def test_the_committed_csv_is_human_readable_plain_text():
-    text = DEFAULT_CSV_PATH.read_text(encoding="utf-8")
+    text = SEED_RISK_LOG_PATH.read_text(encoding="utf-8")
 
     assert text.splitlines()[0] == ",".join(COLUMNS) == "id,title,description,severity,status,related_item_id,opened_at"
     assert "Billing sync nightly job at risk of missing SLA" in text and "RISK-003" in text

@@ -8,10 +8,11 @@ from pathlib import Path
 import pytest
 
 from pm.adapters.risk_log import RiskLogStore
-from pm.risklog.csv_store import DEFAULT_CSV_PATH, CsvRiskLog, read_risks, write_risks
+from pm.risklog.csv_store import CsvRiskLog, read_risks, write_risks
 from pm.risklog.remote import RemoteUnavailableError
+from pm.seed.build import SEED_RISK_LOG_PATH
 
-SEEDED = read_risks(DEFAULT_CSV_PATH)
+SEEDED = read_risks(SEED_RISK_LOG_PATH)
 SECRET_URL = "postgresql://postgres:s3cr3t-pass@db.example.invalid:5432/postgres"
 
 
