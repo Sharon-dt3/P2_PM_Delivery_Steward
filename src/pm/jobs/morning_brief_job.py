@@ -30,6 +30,8 @@ for the exact same simulated moment idempotent at the snapshot layer.
 
 from __future__ import annotations
 
+import logging
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -58,12 +60,15 @@ from pm.jobs.snapshot_capture import capture_snapshot
 from pm.mirror.hook import mirrored
 from pm.reporting.facts import compute_morning_brief_facts
 from pm.reporting.morning_brief import MorningBrief, generate_morning_brief
+from pm.risk.proposals import detect_and_propose
 from pm.risklog.hook import pull_lead_edits_if_enabled
 from pm.scheduling.config import ProjectScheduleConfig
 from pm.storage.db import DEFAULT_DB_PATH
 
 SKIPPED_NON_WORKING_DAY = "skipped_non_working_day"
 GENERATED = "generated"
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -76,6 +81,7 @@ class MorningBriefJobResult:
     delivery_status: str = NOT_ATTEMPTED  # proposed | already_proposed | failed | not_attempted
     delivery_detail: str = ""
     proposal_id: str | None = None
+    risk_proposals: int = 0  # risk-log entries proposed this run (PM-16; 0 when detection is off)
     risk_log_sync: str = ""  # off | skipped | error | in_sync | pushed | pulled | conflict | ...
 
 
@@ -117,6 +123,7 @@ def run_morning_brief_job(
     brief = generate_morning_brief(facts, gateway)
 
     status, detail, proposal_id = _propose(config, brief, local_day.isoformat(), taken_at, db_path, publisher, policy)
+    risk_proposals = _propose_risks(snapshot, gateway, db_path)
     return MorningBriefJobResult(
         channel_id=config.channel_id,
         taken_at=taken_at,
@@ -126,8 +133,22 @@ def run_morning_brief_job(
         delivery_status=status,
         delivery_detail=detail,
         proposal_id=proposal_id,
+        risk_proposals=risk_proposals,
         risk_log_sync=risk_log_sync,
     )
+
+
+def _propose_risks(snapshot, gateway, db_path) -> int:
+    """PM-16, when PM_RISK_DETECTION=1: propose a risk-log entry for each current blocker
+    that has none. Returns how many NEW proposals were made. Never raises: the brief
+    is already made, and a failure here must not take the scheduled job down."""
+    if os.environ.get("PM_RISK_DETECTION", "0") != "1":
+        return 0
+    try:
+        return sum(1 for r in detect_and_propose(snapshot, gateway, db_path=db_path) if r.created)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("risk_detection_failed error=%s: %s", type(exc).__name__, exc)
+        return 0
 
 
 def _propose(config, brief, local_date, taken_at, db_path, publisher, policy):

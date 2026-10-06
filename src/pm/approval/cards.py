@@ -73,6 +73,24 @@ def pending_brief_card(pending: PendingApproval) -> dict:
     )
 
 
+def pending_proposal_only_card(pending: PendingApproval) -> dict:
+    """The card for a proposal that can be read and rejected but not carried out (a
+    risk-log entry): no Approve, no edit box."""
+    return _card(
+        [
+            _text(pending.summary, size="Large", weight="Bolder"),
+            _text(pending.content, fontType="Monospace"),
+            _text("Applying an approved risk entry is not built yet: it can only be rejected.", isSubtle=True),
+        ],
+        [
+            {
+                "type": "Action.Submit", "title": "Reject", "style": "destructive", "associatedInputs": "none",
+                "data": {"action": "reject", "proposal_id": pending.proposal_id},
+            },
+        ],
+    )
+
+
 def decision_card(trail: AuditTrail) -> dict:
     """The card shown once a decision is made: who, when, what was proposed,
     what was applied."""
@@ -144,7 +162,7 @@ def handle_list_pending(request: dict, *, db_path: str | Path = DEFAULT_DB_PATH)
             {
                 "proposal_id": p.proposal_id, "type": p.type, "target_channel": p.target_channel,
                 "local_date": p.local_date, "created_at": p.created_at, "summary": p.summary,
-                "card": pending_brief_card(p),
+                "card": pending_brief_card(p) if p.type in service.EXECUTABLE_TYPES else pending_proposal_only_card(p),
             }
             for p in service.list_pending_approvals(db_path=db_path)
         ]

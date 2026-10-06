@@ -64,3 +64,4 @@ def _tests_never_touch_the_real_supabase_mirror(monkeypatch):
     monkeypatch.setenv("PM_SUPABASE_MIRROR", "0")
     monkeypatch.setenv("SUPABASE_DB_URL", "")
     monkeypatch.setenv("PM_RISK_LOG_SYNC", "0")  # likewise: no test may rewrite the committed risk log
+    monkeypatch.setenv("PM_RISK_DETECTION", "0")  # risk detection is opt-in per test

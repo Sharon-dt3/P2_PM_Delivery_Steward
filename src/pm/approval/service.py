@@ -43,6 +43,11 @@ from pm.reporting.morning_brief import _AS_RECORDED
 from pm.scheduling.config import P1_CHANNEL_CONFIG_DIR
 from pm.storage.db import DEFAULT_DB_PATH
 
+# The only proposal types this service can carry out. A risk-log entry (PM-16) is
+# reviewed here -- shown, rejected on the record -- but approving one would have
+# nothing to execute, so it is refused up front rather than left half-approved.
+EXECUTABLE_TYPES = frozenset({BRIEF_PROPOSAL_TYPE})
+
 SENT = "sent"
 REJECTED_OUTCOME = "rejected"
 REFUSED = "refused"
@@ -98,6 +103,15 @@ def _is_approver(approver_id: str, policy: ApprovalPolicy) -> bool:
     return bool(who) and who != AUTO_APPROVER and who in policy.approver_ids
 
 
+def _not_executable(proposal: Proposal) -> str | None:
+    if proposal.type in EXECUTABLE_TYPES:
+        return None
+    return (
+        f"a {proposal.type} proposal cannot be approved or sent: applying an approved risk entry "
+        "is not built, so approving it would do nothing. It can be reviewed and rejected"
+    )
+
+
 def _normalise(text: str) -> str:
     return text.replace("\r\n", "\n").strip()
 
@@ -106,10 +120,12 @@ def _summarize(proposal: Proposal) -> PendingApproval:
     payload = proposal.payload
     target = payload.get("target_channel", "?")
     date = payload.get("local_date", "?")
+    summary = f"Morning brief for {date} to {target}"
+    if proposal.type not in EXECUTABLE_TYPES:
+        summary = f"Proposed risk log entry for {payload.get('item_id', '?')} ({payload.get('blocker_ref', '?')})"
     return PendingApproval(
         proposal_id=proposal.id, type=proposal.type, target_channel=target, local_date=date,
-        created_at=proposal.created_at, summary=f"Morning brief for {date} to {target}",
-        content=payload.get("content", ""),
+        created_at=proposal.created_at, summary=summary, content=payload.get("content", ""),
     )
 
 
@@ -167,6 +183,9 @@ def approve_and_send(
     except ProposalNotFoundError:
         return ActionResult(proposal_id, REFUSED, f"no proposal with id {proposal_id!r}")
 
+    unsupported = _not_executable(proposal)
+    if unsupported:
+        return _deny(db_path, approver_id, proposal_id, "approve", unsupported)
     scope_problem = _out_of_scope(proposal, publisher, policy)
     if scope_problem:
         return ActionResult(proposal_id, REFUSED, scope_problem)
@@ -248,6 +267,9 @@ def _execute(proposal_id: str, *, actor: str, publisher, policy: ApprovalPolicy,
         proposal = store.get(proposal_id)
     except ProposalNotFoundError:
         return ActionResult(proposal_id, REFUSED, f"no proposal with id {proposal_id!r}")
+    unsupported = _not_executable(proposal)  # defence in depth: whatever its status, only a brief is posted
+    if unsupported:
+        return ActionResult(proposal_id, REFUSED, unsupported)
     scope_problem = _out_of_scope(proposal, publisher, policy)
     if scope_problem and proposal.status == APPROVED:
         return ActionResult(proposal_id, REFUSED, scope_problem)
@@ -321,6 +343,8 @@ def explain_hold(
         return f"no proposal with id {proposal_id!r}"
     if proposal.status != PENDING:
         return f"already {proposal.status}: nothing is waiting"
+    if proposal.type not in EXECUTABLE_TYPES:
+        return "this is a risk log entry proposal: auto-approve never takes it, so a person has to decide (it can only be rejected for now)"
     if not policy.auto_approve:
         return "auto-approve is off, so a person has to decide"
     try:
@@ -362,6 +386,8 @@ def auto_approve_and_send(
         return ActionResult(proposal_id, REFUSED, f"no proposal with id {proposal_id!r}")
     if proposal.status != PENDING:
         return ActionResult(proposal_id, REFUSED, f"proposal is {proposal.status!r}, not pending")
+    if proposal.type not in EXECUTABLE_TYPES:
+        return _held(proposal_id, "a risk log entry proposal is never auto-approved; a person has to decide")
 
     held = _auto_hold_reason(proposal, policy, publisher, store)
     if held:

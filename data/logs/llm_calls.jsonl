@@ -1,0 +1,2 @@
+{"timestamp": 1791264370.523114, "cache_key": "a5dec6a1bf999a98beeba1266431494384dcad989a1f143176c650b4ee07fca7", "provider": "ollama", "model": "gemma2:9b", "prompt_tokens": 904, "completion_tokens": 137, "latency_ms": 61993.54, "cache_hit": false, "degraded": true}
+{"timestamp": 1791264407.65566, "cache_key": "23c4b882ac695ada203a0a8e67ef2552e0da2fe51c2c4f445b8a7b705b3fee28", "provider": "ollama", "model": "gemma2:9b", "prompt_tokens": 860, "completion_tokens": 143, "latency_ms": 37093.97, "cache_hit": false, "degraded": true}

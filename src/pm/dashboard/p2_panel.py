@@ -34,6 +34,9 @@ def _pending(policy, acting_as, db_path) -> None:
     if not pending:
         st.info("Nothing is awaiting approval.")
     for item in pending:
+        if item.type not in service.EXECUTABLE_TYPES:
+            _pending_proposal_only(item, policy, acting_as, db_path)
+            continue
         with st.container(border=True):
             st.subheader(f"{item.local_date}  →  {channel_name(item.target_channel, p1_db_path())}")
             created = item.created_at.split(".")[0].replace("T", " ") + " UTC"
@@ -65,6 +68,27 @@ def _pending(policy, acting_as, db_path) -> None:
                         item.proposal_id, approver_id=acting_as, reason=reason or None, policy=policy, db_path=db_path
                     )
                     _done("warning", result)
+
+
+def _pending_proposal_only(item, policy, acting_as, db_path) -> None:
+    """A proposal this service can show and reject but not carry out (a risk-log
+    entry, PM-16): no Approve and no edit box, and the page says why."""
+    with st.container(border=True):
+        st.subheader(item.summary)
+        created = item.created_at.split(".")[0].replace("T", " ") + " UTC"
+        st.caption(f"proposal {item.proposal_id[:8]}… · proposed {created} · {item.type}")
+        st.caption(
+            "Applying an approved risk entry to the risk log is not built yet, so there is no Approve here: "
+            "you can read it and reject it. Nothing is written to the risk log."
+        )
+        with st.expander("What the agent proposed", expanded=True):
+            st.text(item.content)
+        reason = st.text_input("Reason, if rejecting (optional)", key=f"reason_{item.proposal_id}")
+        if acting_as and st.button("Reject", key=f"reject_{item.proposal_id}"):
+            result = service.reject(
+                item.proposal_id, approver_id=acting_as, reason=reason or None, policy=policy, db_path=db_path
+            )
+            _done("warning", result)
 
 
 def _unsent(policy, acting_as, db_path) -> None:

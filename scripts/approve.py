@@ -68,7 +68,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "list":
         pending = service.list_pending_approvals(**kwargs)
         for p in pending:
-            print(f"{p.proposal_id}  {p.local_date}  to {p.target_channel}  proposed {p.created_at}")
+            what = f"to {p.target_channel}" if p.type in service.EXECUTABLE_TYPES else p.summary
+            print(f"{p.proposal_id}  {p.local_date}  {what}  proposed {p.created_at}")
         if not pending:
             print("Nothing is awaiting a decision.")
         return 0
