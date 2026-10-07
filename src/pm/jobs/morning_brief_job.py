@@ -46,6 +46,7 @@ from pm.approval.proposals import (
 from pm.approval.service import (
     ApprovalPolicy,
 )
+from pm.commitments.job import run_commitment_pass_safely
 from pm.jobs.proposal_flow import propose_for_approval
 from pm.jobs.snapshot_capture import capture_snapshot
 from pm.mirror.hook import mirrored
@@ -74,6 +75,7 @@ class MorningBriefJobResult:
     delivery_detail: str = ""
     proposal_id: str | None = None
     risk_proposals: int = 0  # risk-log entries proposed this run (PM-16; 0 when detection is off)
+    commitment_followups: int = 0  # reminders and escalations sent or waiting for a person this run (PM-24; 0 when off)
     risk_log_sync: str = ""  # off | skipped | error | in_sync | pushed | pulled | conflict | ...
 
 
@@ -116,6 +118,7 @@ def run_morning_brief_job(
 
     status, detail, proposal_id = _propose(config, brief, local_day.isoformat(), taken_at, db_path, publisher, policy)
     risk_proposals = _propose_risks(snapshot, gateway, db_path)
+    commitment_followups = run_commitment_pass_safely(resolved_moment, db_path=db_path, publisher=publisher, policy=policy)
     return MorningBriefJobResult(
         channel_id=config.channel_id,
         taken_at=taken_at,
@@ -126,6 +129,7 @@ def run_morning_brief_job(
         delivery_detail=detail,
         proposal_id=proposal_id,
         risk_proposals=risk_proposals,
+        commitment_followups=commitment_followups,
         risk_log_sync=risk_log_sync,
     )
 

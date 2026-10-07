@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 from p1.adapters.teams_publisher_mock import LogPublisher
@@ -37,7 +38,14 @@ from spine.approval.write_guard import WriteRefusedError, guarded_send
 
 from pm.adapters.teams import get_teams_publisher
 from pm.approval.audit import AGENT, AUTO_APPROVER, write_audit
-from pm.approval.proposals import BRIEF_PROPOSAL_TYPE, EOD_PROPOSAL_TYPE
+from pm.approval.proposals import (
+    BRIEF_PROPOSAL_TYPE,
+    DIRECT_MESSAGE_TYPES,
+    EOD_PROPOSAL_TYPE,
+    ESCALATION_PROPOSAL_TYPE,
+    NUDGE_PROPOSAL_TYPE,
+)
+from pm.commitments import delivery
 from pm.mirror.hook import mirrored
 from pm.reporting.morning_brief import _AS_RECORDED
 from pm.scheduling.config import P1_CHANNEL_CONFIG_DIR
@@ -46,7 +54,7 @@ from pm.storage.db import DEFAULT_DB_PATH
 # The only proposal types this service can carry out. A risk-log entry (PM-16) is
 # reviewed here -- shown, rejected on the record -- but approving one would have
 # nothing to execute, so it is refused up front rather than left half-approved.
-EXECUTABLE_TYPES = frozenset({BRIEF_PROPOSAL_TYPE, EOD_PROPOSAL_TYPE})
+EXECUTABLE_TYPES = frozenset({BRIEF_PROPOSAL_TYPE, EOD_PROPOSAL_TYPE}) | DIRECT_MESSAGE_TYPES
 
 SENT = "sent"
 REJECTED_OUTCOME = "rejected"
@@ -123,6 +131,10 @@ def _summarize(proposal: Proposal) -> PendingApproval:
     summary = f"Morning brief for {date} to {target}"
     if proposal.type == EOD_PROPOSAL_TYPE:
         summary = f"End-of-day summary for {date} to {target}"
+    if proposal.type == NUDGE_PROPOSAL_TYPE:
+        summary = f"Reminder to {payload.get('recipient_name') or target} about commitment #{payload.get('commitment_id')}"
+    if proposal.type == ESCALATION_PROPOSAL_TYPE:
+        summary = f"Escalation to {payload.get('recipient_name') or target} about commitment #{payload.get('commitment_id')}"
     if proposal.type not in EXECUTABLE_TYPES:
         summary = f"Proposed risk log entry for {payload.get('item_id', '?')} ({payload.get('blocker_ref', '?')})"
     return PendingApproval(
@@ -149,6 +161,8 @@ def _deny(db_path, approver_id: str, proposal_id: str, attempted: str, why: str)
 def _out_of_scope(proposal: Proposal, publisher, policy: ApprovalPolicy) -> str | None:
     """A real publisher may only post to an allowlisted channel; the log-only
     one posts nowhere, so it needs no allowlist."""
+    if proposal.type in DIRECT_MESSAGE_TYPES:  # a message to one person, not a channel post: no channel allowlist, but a named recipient
+        return None if proposal.payload.get("recipient_id") else "this message has no recipient"
     if isinstance(publisher, LogPublisher):
         return None
     target = proposal.payload.get("target_channel")
@@ -167,6 +181,7 @@ def approve_and_send(
     policy: ApprovalPolicy | None = None,
     store: ProposalStore | None = None,
     db_path: str | Path = DEFAULT_DB_PATH,
+    now: datetime | None = None,
 ) -> ActionResult:
     """Approve a pending proposal -- optionally with edited text -- and execute
     it through the adapter in the same call."""
@@ -216,7 +231,19 @@ def approve_and_send(
             },
         )
     write_audit(db_path, actor=approver, action="proposal.approved", proposal_id=proposal_id, details={"edited": edited})
-    return _execute(proposal_id, actor=approver, publisher=publisher, policy=policy, store=store, db_path=db_path)
+    return _execute(proposal_id, actor=approver, publisher=publisher, policy=policy, store=store, db_path=db_path, now=now)
+
+
+def approve_automatically(
+    proposal_id: str, *, reason: str, store: ProposalStore | None = None, db_path: str | Path = DEFAULT_DB_PATH,
+) -> None:
+    """The system approves a pending reminder or escalation under the commitment follow-up's own rules (the person
+    has been reminded before, within the cap). Recorded as automatic, under the system's own approver id, with the reason:
+    never as a person. Raises IllegalTransitionError if it is not pending. Sending is a separate step (send_approved)."""
+    store = store or ProposalStore(db_path)
+    store.approve(proposal_id, approver_id=AUTO_APPROVER)
+    write_audit(db_path, actor=AUTO_APPROVER, action="proposal.approved", proposal_id=proposal_id,
+                details={"edited": False, "automatic": True, "reason": reason})
 
 
 @mirrored
@@ -252,19 +279,48 @@ def send_approved(
     policy: ApprovalPolicy | None = None,
     store: ProposalStore | None = None,
     db_path: str | Path = DEFAULT_DB_PATH,
+    now: datetime | None = None,
 ) -> ActionResult:
     """Execute (or retry) an already-approved proposal. Refused for anything
-    that is not approved -- pending, rejected, already sent, unknown."""
+    that is not approved -- pending, rejected, already sent, unknown. `now` is the
+    clock a direct message's rules are judged by (a demo or a test can set it)."""
     policy = policy if policy is not None else load_approval_policy()
     store = store or ProposalStore(db_path)
     try:
         publisher = publisher if publisher is not None else get_teams_publisher()
     except Exception as exc:  # noqa: BLE001 - reported, never raised past this seam
         return ActionResult(proposal_id, REFUSED, f"publisher not available: {type(exc).__name__}: {exc}")
-    return _execute(proposal_id, actor=AGENT, publisher=publisher, policy=policy, store=store, db_path=db_path)
+    return _execute(proposal_id, actor=AGENT, publisher=publisher, policy=policy, store=store, db_path=db_path, now=now)
 
 
-def _execute(proposal_id: str, *, actor: str, publisher, policy: ApprovalPolicy, store: ProposalStore, db_path) -> ActionResult:
+def _execute_direct_message(proposal: Proposal, *, actor: str, publisher, store: ProposalStore, db_path, now: datetime) -> ActionResult:
+    """A reminder to the person, or an escalation to the lead: a direct message, sent only after the rules in
+    pm.commitments.delivery (the shared cap, the commitment still open) and recorded there afterwards."""
+    problem = delivery.pre_send_problem(proposal, db_path, now)
+    if problem:
+        write_audit(db_path, actor=actor, action="proposal.send_refused", proposal_id=proposal.id, details={"reason": problem})
+        return ActionResult(proposal.id, REFUSED, problem)
+    recipient, content = proposal.payload["recipient_id"], proposal.payload.get("content", "")
+    action = "nudge" if proposal.type == NUDGE_PROPOSAL_TYPE else "escalation"
+    try:
+        guarded_send(
+            proposal.id, action_type=action, target=recipient,
+            send_fn=lambda: publisher.post_direct_message(recipient, content), store=store, db_path=db_path,
+        )
+    except WriteRefusedError as exc:
+        return ActionResult(proposal.id, REFUSED, str(exc))
+    except Exception as exc:  # noqa: BLE001 - guarded_send already logged send_failed; report, never raise
+        write_audit(db_path, actor=actor, action="proposal.send_failed", proposal_id=proposal.id,
+                    details={"error": f"{type(exc).__name__}: {exc}"[:300]})
+        return ActionResult(proposal.id, SEND_FAILED, f"{type(exc).__name__}: {exc}")
+    write_audit(db_path, actor=actor, action="proposal.sent", proposal_id=proposal.id, details={"target": recipient})
+    delivery.after_send(proposal, db_path, now)
+    return ActionResult(proposal.id, SENT, f"sent to {recipient}")
+
+
+def _execute(
+    proposal_id: str, *, actor: str, publisher, policy: ApprovalPolicy, store: ProposalStore, db_path, now: datetime | None = None,
+) -> ActionResult:
     try:
         proposal = store.get(proposal_id)
     except ProposalNotFoundError:
@@ -275,6 +331,9 @@ def _execute(proposal_id: str, *, actor: str, publisher, policy: ApprovalPolicy,
     scope_problem = _out_of_scope(proposal, publisher, policy)
     if scope_problem and proposal.status == APPROVED:
         return ActionResult(proposal_id, REFUSED, scope_problem)
+    if proposal.type in DIRECT_MESSAGE_TYPES:
+        return _execute_direct_message(proposal, actor=actor, publisher=publisher, store=store, db_path=db_path,
+                                       now=now or datetime.now(timezone.utc))
 
     target = proposal.payload.get("target_channel", "")
     content = proposal.payload.get("content", "")
@@ -345,6 +404,8 @@ def explain_hold(
         return f"no proposal with id {proposal_id!r}"
     if proposal.status != PENDING:
         return f"already {proposal.status}: nothing is waiting"
+    if proposal.type in DIRECT_MESSAGE_TYPES:
+        return "a reminder or an escalation: it is sent under the commitment follow-up's rules, or when a person approves it"
     if proposal.type not in EXECUTABLE_TYPES:
         return "this is a risk log entry proposal: auto-approve never takes it, so a person has to decide (it can only be rejected for now)"
     if not policy.auto_approve:
@@ -388,6 +449,8 @@ def auto_approve_and_send(
         return ActionResult(proposal_id, REFUSED, f"no proposal with id {proposal_id!r}")
     if proposal.status != PENDING:
         return ActionResult(proposal_id, REFUSED, f"proposal is {proposal.status!r}, not pending")
+    if proposal.type in DIRECT_MESSAGE_TYPES:
+        return _held(proposal_id, "a reminder or an escalation is approved by the commitment follow-up's own rules or by a person, never by brief auto-approve")
     if proposal.type not in EXECUTABLE_TYPES:
         return _held(proposal_id, "a risk log entry proposal is never auto-approved; a person has to decide")
 

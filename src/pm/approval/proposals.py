@@ -25,6 +25,9 @@ from pm.storage.db import DEFAULT_DB_PATH
 
 BRIEF_PROPOSAL_TYPE = "morning_brief_publish"
 EOD_PROPOSAL_TYPE = "end_of_day_summary_publish"
+NUDGE_PROPOSAL_TYPE = "commitment_nudge"  # a reminder, sent as a direct message to the person who made the commitment
+ESCALATION_PROPOSAL_TYPE = "commitment_escalation"  # an evidence bundle, sent as a direct message to the lead
+DIRECT_MESSAGE_TYPES = frozenset({NUDGE_PROPOSAL_TYPE, ESCALATION_PROPOSAL_TYPE})
 
 PROPOSED = "proposed"
 ALREADY_PROPOSED = "already_proposed"

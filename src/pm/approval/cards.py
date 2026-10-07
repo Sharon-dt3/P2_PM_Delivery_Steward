@@ -17,11 +17,24 @@ from pathlib import Path
 
 from pm.approval import service
 from pm.approval.audit import AuditTrail
-from pm.approval.proposals import EOD_PROPOSAL_TYPE
+from pm.approval.proposals import (
+    BRIEF_PROPOSAL_TYPE,
+    EOD_PROPOSAL_TYPE,
+    ESCALATION_PROPOSAL_TYPE,
+    NUDGE_PROPOSAL_TYPE,
+)
 from pm.approval.service import ActionResult, ApprovalPolicy, PendingApproval
 from pm.storage.db import DEFAULT_DB_PATH
 
 _SCHEMA = "http://adaptivecards.io/schemas/adaptive-card.json"
+
+
+_CARD_TITLES = {
+    BRIEF_PROPOSAL_TYPE: "Morning brief awaiting approval",
+    EOD_PROPOSAL_TYPE: "End-of-day summary awaiting approval",
+    NUDGE_PROPOSAL_TYPE: "Reminder awaiting approval",
+    ESCALATION_PROPOSAL_TYPE: "Escalation to the lead awaiting approval",
+}
 
 
 def _card(body: list[dict], actions: list[dict] | None = None) -> dict:
@@ -41,8 +54,7 @@ def pending_brief_card(pending: PendingApproval) -> dict:
     edits; Reject needs no input."""
     return _card(
         [
-            _text("End-of-day summary awaiting approval" if pending.type == EOD_PROPOSAL_TYPE else "Morning brief awaiting approval",
-                  size="Large", weight="Bolder"),
+            _text(_CARD_TITLES.get(pending.type, "Message awaiting approval"), size="Large", weight="Bolder"),
             {
                 "type": "FactSet",
                 "facts": [
