@@ -51,6 +51,7 @@ from spine.eval.runner import run_eval
 from spine.prompts.registry import PromptRegistry
 
 from pm.eval.pm18_cases import report as gc4_report
+from pm.eval.pm20_cases import report as gc5_report
 from pm.eval.registrations import register_all
 from pm.eval.runner import main as print_golden_case_3
 
@@ -79,6 +80,8 @@ def main() -> int:
     print_golden_case_3()
     print()
     print(gc4_report())
+    print()
+    print(gc5_report())
     print()
 
     registry = GoldenCaseRegistry()
