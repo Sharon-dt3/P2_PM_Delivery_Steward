@@ -54,6 +54,7 @@ from pm.eval.pm18_cases import report as gc4_report
 from pm.eval.pm20_cases import report as gc5_report
 from pm.eval.registrations import register_all
 from pm.eval.runner import main as print_golden_case_3
+from pm.prompts import format_prompts, prompt_record
 
 RESULTS_PATH = _REPO_ROOT / "eval" / "results.jsonl"
 DEFAULT_MODEL_ID = "scripted-gateway"
@@ -77,6 +78,9 @@ def main() -> int:
     args = parser.parse_args()
     model_id = args.model_id or (f"ollama:{args.live_ollama}" if args.live_ollama else DEFAULT_MODEL_ID)
 
+    prompts = PromptRegistry(_REPO_ROOT / "prompts")
+    print(format_prompts(prompts))
+    print()
     print_golden_case_3()
     print()
     print(gc4_report())
@@ -99,13 +103,12 @@ def main() -> int:
         )
     else:
         register_all(registry)
-    prompts = PromptRegistry(_REPO_ROOT / "prompts")
     summary = run_eval(
         registry,
         model_id=model_id,
         prompt_versions={name: prompts.get(name).version for name in prompts.list_capabilities()},
         results_path=RESULTS_PATH,
-        extra=code_revision(),
+        extra={**code_revision(), **prompt_record(prompts)},
         out=sys.stdout,  # looked up now, not when the harness was imported
     )
     return 0 if summary.all_passed else 1
