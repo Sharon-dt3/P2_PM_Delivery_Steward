@@ -148,6 +148,12 @@ def test_a_due_date_is_resolved_against_the_day_it_was_said(text, made_on, expec
     ("Deployed the onboarding wizard to staging, looks stable so far.", False),
     ("Search index work is blocked: the staging DB migration hasn't run yet.", False),
     ("Open question on whether the export job should handle the null case.", False),
+    # a rule or a description of how something behaves is not a promise (live, 2026-10-07)
+    ("If the other side's ledger cannot be read, no reminder will be sent rather than risking an unwanted one.", False),
+    ("Anything over the cap will be held until the next day.", False),
+    # but "will be <done>" about a piece of work is
+    ("The overdue item will be closed tomorrow.", True),
+    ("The thread reply tests will be done by Friday.", True),
 ])
 def test_what_is_a_commitment_and_what_is_a_status_report(text, expected):
     assert is_commitment(text) is expected

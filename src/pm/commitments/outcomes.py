@@ -31,8 +31,10 @@ ADDED, ALREADY_KNOWN = "added", "already_known"
 NOT_A_COMMITMENT, NO_AUTHOR, NOT_ON_ROSTER, CONSENT_WITHHELD = "not_a_commitment", "no_author", "not_on_roster", "consent_withheld"
 
 # A promise to do something: first person future, or "will have / should land / done by". Not a report of what was done.
+# A bare "will be" is not enough ("no reminder will be sent" describes a rule); it counts only before a done-word.
 _PROMISE = re.compile(
-    r"\b(i'?ll|i will|we'?ll|we will|will (?:have|be|land|ship|deliver|send|fix|finish|get|push|merge|update)|"
+    r"\b(i'?ll|i will|we'?ll|we will|will (?:have|land|ship|deliver|send|fix|finish|get|push|merge|update)|"
+    r"will be (?:done|ready|finished|completed|merged|closed|shipped|delivered|fixed|live|in|out|up|submitted|reviewed|sketched)|"
     r"should (?:land|be in|be done|be ready|ship|have)|going to|plan(?:ning)? to|expect(?:s|ed)? to|"
     r"(?:done|ready|fixed|in|delivered) by)\b",
     re.IGNORECASE,
