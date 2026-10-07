@@ -219,3 +219,30 @@ def test_the_eval_script_records_the_three_prompts_in_the_results_file(monkeypat
     assert record["prompt_roles"][SUMMARY]["version"] == "v1" and record["prompt_roles"][BRIEF]["version"] == "v4"
     assert record["prompt_versions"]["pm22_end_of_day_summary"] == "v1"  # and the all-prompts map has it too
     assert stale_prompts(record, REGISTRY) == []
+
+
+# --- the acceptance test: the committed results file -----------------------------------------------------------------------
+
+
+def _latest_recorded_run():
+    lines = (REPO / "eval" / "results.jsonl").read_text().splitlines()
+    return json.loads(lines[-1])
+
+
+def test_the_committed_results_carry_the_three_prompts_with_their_versions():
+    """PM-21's acceptance: the results file holds the brief, summary and mitigation prompts, each with its version."""
+    record = _latest_recorded_run()
+
+    roles = record["prompt_roles"]
+    assert set(roles) == {BRIEF, SUMMARY, MITIGATION}
+    assert roles[BRIEF]["capability"] == "pm08_morning_brief" and roles[BRIEF]["version"] == "v4"
+    assert roles[SUMMARY]["capability"] == "pm22_end_of_day_summary" and roles[SUMMARY]["version"] == "v1"
+    assert roles[MITIGATION]["capability"] == "pm19_risk_promotion" and roles[MITIGATION]["version"] == "v1"
+    for info in roles.values():
+        assert info["version"].startswith("v") and len(info["sha256"]) == 16
+    assert record["prompt_versions"]["pm22_end_of_day_summary"] == "v1"
+
+
+def test_the_committed_results_still_describe_the_prompts_in_the_registry():
+    """If a prompt changes (a new version, or an edit), the eval must be rerun and its results committed again."""
+    assert stale_prompts(_latest_recorded_run(), REGISTRY) == []
