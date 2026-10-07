@@ -410,6 +410,18 @@ def _order_key(section_key: str, facts: MorningBriefFacts) -> Callable[[FactualL
     return lambda line: position.get(line.message_id, len(position))
 
 
+def _identified(line: FactualLine, facts: MorningBriefFacts) -> str:
+    """A blocker line says which risk it is and how severe, whatever the model's wording: if the model left the
+    risk id or the severity tag out, they are put in front, once; a line that already carries them is untouched.
+    (Found by golden case 9 on a real model, which wrote the sentence alone.)"""
+    blocker = next((b for b in facts.blockers if _reference("risk", b.risk_id) == line.message_id), None)
+    if blocker is None:
+        return line.text
+    severity = "" if f"[{blocker.severity}]" in line.text else f"[{blocker.severity}] "
+    risk = "" if blocker.risk_id in line.text else f"{blocker.risk_id}: "
+    return f"{severity}{risk}{line.text}"
+
+
 def _render_brief(facts: MorningBriefFacts, sections: dict[str, list[FactualLine]]) -> str:
     """Deterministic assembly of the grounded lines into the final brief
     text -- no model call happens here. A fact whose line was dropped for
@@ -500,7 +512,7 @@ def _render_brief(facts: MorningBriefFacts, sections: dict[str, list[FactualLine
     grounded_refs = {line.message_id for line in blocker_lines}
     if blocker_lines or section_facts["blockers"]:
         for line in blocker_lines:
-            parts.append(f"- {line.text}")
+            parts.append(f"- {_identified(line, facts)}")
         for fact in section_facts["blockers"]:  # facts.blockers' own severity order
             if fact.reference_id not in grounded_refs:
                 parts.append(f"- {fact.detail} {_AS_RECORDED}")
