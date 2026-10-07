@@ -1,0 +1,145 @@
+{
+  "$defs": {
+    "EvidenceItem": {
+      "description": "One grounded factual line -- an update, blocker, decision, or\nquestion -- exactly as SPN-06's grounding kernel verified it.\nmessage_id is required (never null): only a line that already\ncarried a resolvable message_id could have passed grounding and\nreached DailySummaryResult.section_lines in the first place.",
+      "properties": {
+        "message_id": {
+          "title": "Message Id",
+          "type": "string"
+        },
+        "quote": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Quote"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "message_id",
+        "text"
+      ],
+      "title": "EvidenceItem",
+      "type": "object"
+    },
+    "ParticipationEntry": {
+      "description": "One non-responder for the day -- CHN-10's own three states.\nSomeone on the roster with no entry here contributed that day; see\nthis module's own docstring.",
+      "properties": {
+        "evidence_message_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Message Ids",
+          "type": "array"
+        },
+        "member_id": {
+          "title": "Member Id",
+          "type": "string"
+        },
+        "state": {
+          "description": "no_message | posted_no_update | excluded",
+          "title": "State",
+          "type": "string"
+        }
+      },
+      "required": [
+        "member_id",
+        "state"
+      ],
+      "title": "ParticipationEntry",
+      "type": "object"
+    }
+  },
+  "$id": "https://p1-channel.internal/schema/outcome_record/v1.0",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "One channel's one day's classified updates, blockers, decisions, questions and participation ledger -- the cross-agent contract P2 (and later P3) consume. Published by CHN-26; see docs/outcome_record_contract.md.",
+  "properties": {
+    "allowlisted": {
+      "title": "Allowlisted",
+      "type": "boolean"
+    },
+    "blockers": {
+      "items": {
+        "$ref": "#/$defs/EvidenceItem"
+      },
+      "title": "Blockers",
+      "type": "array"
+    },
+    "channel_display_name": {
+      "title": "Channel Display Name",
+      "type": "string"
+    },
+    "channel_id": {
+      "title": "Channel Id",
+      "type": "string"
+    },
+    "date": {
+      "format": "date",
+      "title": "Date",
+      "type": "string"
+    },
+    "decisions": {
+      "items": {
+        "$ref": "#/$defs/EvidenceItem"
+      },
+      "title": "Decisions",
+      "type": "array"
+    },
+    "generated_at": {
+      "title": "Generated At",
+      "type": "string"
+    },
+    "participation": {
+      "items": {
+        "$ref": "#/$defs/ParticipationEntry"
+      },
+      "title": "Participation",
+      "type": "array"
+    },
+    "questions": {
+      "items": {
+        "$ref": "#/$defs/EvidenceItem"
+      },
+      "title": "Questions",
+      "type": "array"
+    },
+    "roster": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Roster",
+      "type": "array"
+    },
+    "schema_version": {
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "updates": {
+      "items": {
+        "$ref": "#/$defs/EvidenceItem"
+      },
+      "title": "Updates",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "channel_id",
+    "channel_display_name",
+    "date",
+    "allowlisted",
+    "roster",
+    "generated_at"
+  ],
+  "title": "P1 Channel outcome record",
+  "type": "object"
+}
