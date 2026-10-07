@@ -34,6 +34,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from pm.adapters.teams import P1_REPO_ROOT
+from pm.commitments.store import ensure_current
 from pm.storage.db import DEFAULT_DB_PATH, get_connection
 
 ENV_CAP = "PM_NUDGE_CAP_PER_PERSON_PER_DAY"
@@ -87,6 +88,7 @@ def cap_from_environment(default: int, env: Mapping[str, str] | None = None) -> 
 class SharedNudgeCap:
     def __init__(self, *, db_path: str | Path = DEFAULT_DB_PATH, cap: int = 1, p1_db_path: str | Path | None = None,
                  p1_required: bool | None = None, env: Mapping[str, str] | None = None) -> None:
+        ensure_current(db_path)
         self._db_path = db_path
         self.cap = cap
         if p1_db_path is None:

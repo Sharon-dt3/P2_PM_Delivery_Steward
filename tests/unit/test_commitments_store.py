@@ -267,3 +267,75 @@ def test_nothing_else_in_the_database_is_touched_by_feeding_it(tracker, seeded_d
     _ingest(tracker, _record(updates=[("m-1", "I'll have it done by 2026-09-24.")]))
 
     assert sqlite3.connect(seeded_db_path).execute("SELECT count(*) FROM items").fetchone() == before
+
+
+# --- an existing database from before this feature ---------------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def old_database(tmp_path):
+    """A database as it was before commitment tracking: migrations 0001 to 0004 only, with the seeded commitments in it."""
+    import shutil
+
+    from pm.eval.pristine import build_pristine_database
+    from pm.storage.db import MIGRATIONS_DIR, run_migrations
+
+    full = build_pristine_database(tmp_path / "full")
+    rows = sqlite3.connect(full).execute(
+        "SELECT member_id, item_id, text, due_date_iso, due_date_text, made_at, source_message_id FROM commitments").fetchall()
+    older = tmp_path / "old_migrations"
+    older.mkdir()
+    for name in sorted(p.name for p in MIGRATIONS_DIR.glob("*.sql")):
+        if name < "0005":
+            shutil.copy(MIGRATIONS_DIR / name, older / name)
+    db = tmp_path / "old.db"
+    run_migrations(db, older)
+    conn = sqlite3.connect(db)
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.executemany("INSERT INTO commitments (member_id, item_id, text, due_date_iso, due_date_text, made_at, source_message_id) "
+                     "VALUES (?, ?, ?, ?, ?, ?, ?)", rows)
+    conn.commit()
+    conn.close()
+    return db
+
+
+def test_the_old_database_really_lacks_the_new_columns(old_database):
+    columns = [r[1] for r in sqlite3.connect(old_database).execute("PRAGMA table_info(commitments)")]
+
+    assert "status" not in columns and "source" not in columns
+
+
+def test_opening_the_store_on_an_old_database_upgrades_it_and_keeps_every_commitment(old_database):
+    tracker = CommitmentTracker(old_database)
+
+    rows = tracker.list()
+
+    assert len(rows) == 8 and {r.status for r in rows} == {OPEN} and {r.source for r in rows} == {"seed"}
+    assert tracker.get(6).text.startswith("Expect the staging DB migration") and tracker.get(6).due_date_iso == "2026-09-16"
+
+
+def test_the_upgrade_is_additive_and_runs_once(old_database):
+    CommitmentTracker(old_database)
+    tables = {r[0] for r in sqlite3.connect(old_database).execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    applied = [r[0] for r in sqlite3.connect(old_database).execute("SELECT filename FROM schema_migrations")]
+
+    assert {"commitment_events", "nudges", "commitments", "items", "proposals"} <= tables
+    CommitmentTracker(old_database)  # opening it again changes nothing
+    assert [r[0] for r in sqlite3.connect(old_database).execute("SELECT filename FROM schema_migrations")] == applied
+    assert applied.count("0005_commitment_tracking.sql") == 1
+
+
+def test_the_shared_nudge_ledger_upgrades_an_old_database_too(old_database, tmp_path):
+    from pm.commitments.cap import SharedNudgeCap
+
+    cap = SharedNudgeCap(db_path=old_database, cap=1, p1_db_path=tmp_path / "gone.db", p1_required=False)
+
+    assert cap.reading("wei.chen", "2026-09-18").sent_by_p2 == 0  # the nudges table exists now
+
+
+def test_the_ageing_view_works_on_an_old_database_with_no_manual_step(old_database):
+    from datetime import date
+
+    from pm.commitments.ageing import ageing_view
+
+    assert len(ageing_view(tracker=CommitmentTracker(old_database), today=date(2026, 9, 18))) == 8

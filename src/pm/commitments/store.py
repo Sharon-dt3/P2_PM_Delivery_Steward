@@ -15,7 +15,19 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from pm.storage.db import DEFAULT_DB_PATH, get_connection
+from pm.storage.db import DEFAULT_DB_PATH, get_connection, run_migrations
+
+_UPGRADED: set[str] = set()
+
+
+def ensure_current(db_path: str | Path) -> None:
+    """Bring a database up to the current schema before it is used. Commitment tracking added columns and tables (migration
+    0005); a database made before that (the live one) must not need a manual step. The migration is additive and each one is
+    applied once, so this is safe to call on every open; it is done once per database per process."""
+    key = str(db_path)
+    if key not in _UPGRADED:
+        run_migrations(db_path)
+        _UPGRADED.add(key)
 
 OPEN, FULFILLED, CANCELLED = "open", "fulfilled", "cancelled"
 NO_DATE = "no date given"  # what an undated promise stores: the table requires some due information, and the brief already says this
@@ -46,6 +58,7 @@ class CommitmentNotFoundError(KeyError):
 
 class CommitmentTracker:
     def __init__(self, db_path: str | Path = DEFAULT_DB_PATH) -> None:
+        ensure_current(db_path)
         self._db_path = db_path
 
     def _connect(self) -> sqlite3.Connection:
