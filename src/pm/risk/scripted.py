@@ -42,6 +42,9 @@ class ScriptedRiskGateway:
                 {"kind": "description", "text": gap.description_text(), "reference_id": gap.reference, "quote": gap.description_quote()},
                 {"kind": "impact", "text": gap.impact_text(), "reference_id": gap.reference, "quote": gap.impact_quote()},
             ]
+            if '"mitigation"' in prompt:  # the PM-19 prompt also asks for a mitigation line
+                lines.append({"kind": "mitigation", "text": gap.mitigation_text(), "reference_id": gap.reference,
+                              "quote": gap.mitigation_quote()})
             if self._rewrite and (attempt == 1 or self._persistent):
                 lines = self._rewrite(lines, gap)
         return LLMResponse(

@@ -55,7 +55,7 @@ def seeded_db_path(tmp_path) -> Path:
 
 
 @pytest.fixture(autouse=True)
-def _tests_never_touch_the_real_supabase_mirror(monkeypatch):
+def _tests_never_touch_the_real_supabase_mirror(monkeypatch, tmp_path):
     """The real .env turns the Supabase mirror on and holds its URL. The dashboard
     tests run the app, which calls load_dotenv() on that file, and a leaked setting
     once pushed a temporary test database over the real mirror. Pin it off for every
@@ -65,3 +65,5 @@ def _tests_never_touch_the_real_supabase_mirror(monkeypatch):
     monkeypatch.setenv("SUPABASE_DB_URL", "")
     monkeypatch.setenv("PM_RISK_LOG_SYNC", "0")  # likewise: no test may rewrite the committed risk log
     monkeypatch.setenv("PM_RISK_DETECTION", "0")  # risk detection is opt-in per test
+    monkeypatch.setenv("PM_RISK_PROMOTION_CONFIG", str(tmp_path / "no_promotion_config.yaml"))  # no age requirement unless a test sets one
+    monkeypatch.setenv("PM_RISK_PROMOTION_THRESHOLD_DAYS", "")

@@ -75,6 +75,35 @@ compared on the blocked-since date and the owner they recorded, so nothing alrea
 
 `detect_risks.py --dry-run` shows, per gap, what the memory would do.
 
+## Promotion by age (PM-19)
+
+A blocker is **promoted** to a proposed risk only once it has been blocked for **more days than a
+configured threshold**. Python decides (age and threshold); the model only words it.
+
+- **Age is computed from the status transitions**, not from the tracker's stored `blocked_since`
+  field: the calendar days from the transition that put the item into `blocked` (the latest entry
+  into the current blocked run, so a flap resets the clock) to the project's local date at that moment
+  (`pm/risk/age.py`). If the history cannot give an honest age (the tracker says blocked but the last move
+  was to something else) the age is *unknown* and the blocker is not promoted, and is reported as such.
+- **The threshold is configuration, never a literal**: `config/risk_promotion.yaml` (`threshold_days: 2`),
+  overridden by `PM_RISK_PROMOTION_THRESHOLD_DAYS`, or for one command by `--threshold-days N`. A missing
+  file or `null` means no age requirement (every gap is proposed, as in PM-16). A value that is present but
+  not a whole number >= 0 is an error; the morning job then proposes nothing rather than guess.
+- **"Older than" is strict**: a blocker exactly 2 days old is not promoted at a threshold of 2; a 3-day-old one is.
+- Only blockers **not already in the risk log** are promoted; one already logged is never re-proposed however old.
+- Each proposal carries, besides the description, impact, owner and blocker reference: a **drafted mitigation**
+  (the model's, held to the evidence plus a short list of plain management verbs such as confirm, agree, resolve,
+  escalate; no new person, party, number, date or promise), and the **evidence of how long it has been open**
+  (`age`: days, threshold, the transition it was counted from, and whether the tracker's own field disagrees).
+  A mitigation the model gets wrong is replaced by a fixed one built from the same facts.
+- It uses the same rejection memory (PM-17) and the same review-and-reject-only gate as every risk proposal.
+
+```bash
+uv run python scripts/detect_risks.py --dry-run                 # who is old enough, and what is remembered
+uv run python scripts/detect_risks.py --threshold-days 0        # this run only
+uv run python scripts/detect_risks.py --no-threshold            # PM-16 behaviour for this run
+```
+
 ## Acceptance (PM-16)
 
 On the seeded project the gap set is **PM-014** and **PM-015**; PM-023 (RISK-001) and PM-024
@@ -83,3 +112,8 @@ On the seeded project the gap set is **PM-014** and **PM-015**; PM-023 (RISK-001
 
 **PM-17:** reject one proposal, rerun, and no duplicate appears
 (`tests/unit/test_risk_rejection_memory.py::test_reject_one_rerun_and_no_duplicate_appears`).
+
+**PM-19:** with the threshold at 2 days, exactly the blockers older than 2 are proposed
+(`tests/unit/test_risk_promotion.py::test_with_the_threshold_at_two_days_exactly_the_blockers_older_than_two_are_proposed`,
+which uses blockers aged 0, 1, 2, 3, 4 and 10 days, and `test_whatever_the_configured_threshold_exactly_the_older_blockers_are_proposed`
+for every threshold from 0 to 11).

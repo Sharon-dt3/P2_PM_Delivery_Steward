@@ -13,6 +13,13 @@ wait for a person (scripts/approve.py list, or the dashboard) and can be rejecte
   --at MOMENT           the moment to evaluate, e.g. 2026-09-18T12:00 (UTC when no offset)
   --tz ZONE             the project's timezone (default Asia/Colombo)
 
+Promotion (PM-19): a blocker is only proposed once it has been blocked for MORE days than the
+configured threshold (config/risk_promotion.yaml, or the environment variable
+PM_RISK_PROMOTION_THRESHOLD_DAYS). Age is counted from the item's status transitions.
+  --promotion-config P  read the threshold from this file instead
+  --threshold-days N    use N for this run only
+  --no-threshold        no age requirement for this run: every blocker missing from the log (PM-16)
+
 Usage:
     uv run python scripts/detect_risks.py --dry-run
     uv run python scripts/detect_risks.py --gateway scripted
@@ -34,6 +41,12 @@ from spine.approval.proposals import ProposalStore
 
 from pm.risk import memory
 from pm.risk.gaps import current_blockers, find_gaps
+from pm.risk.promotion import plan_promotion
+from pm.risk.promotion_config import (
+    PromotionConfigError,
+    PromotionPolicy,
+    load_promotion_policy,
+)
 from pm.risk.proposals import detect_and_propose, recall_for
 from pm.state.snapshot import build_current_snapshot
 from pm.storage.db import DEFAULT_DB_PATH
@@ -61,6 +74,39 @@ def _remembered(recalled) -> str:
     }[recalled.state]
 
 
+def _days(n: int) -> str:
+    return f"{n} day" if n == 1 else f"{n} days"
+
+
+def _policy(args) -> PromotionPolicy | None:
+    if args.no_threshold:
+        return None
+    if args.threshold_days is not None:
+        return PromotionPolicy(args.threshold_days, "command line --threshold-days")
+    return load_promotion_policy(path=args.promotion_config)
+
+
+def _non_negative(value: str) -> int:
+    number = int(value)
+    if number < 0:
+        raise argparse.ArgumentTypeError("must be 0 or more")
+    return number
+
+
+def _print_plan(plan, db_path, *, show_memory: bool) -> None:
+    threshold = plan.policy.threshold_days
+    print(f"Promotion threshold: {_days(threshold)} ({plan.policy.source}); a blocker is promoted once it is OLDER than that")
+    for c in plan.eligible:
+        print(f"  {c.gap.item_id}  {_days(c.age.days)} old, blocked since {c.age.entered_on}: promote (older than {_days(threshold)})")
+        if show_memory:
+            print(f"      {_remembered(recall_for(c.gap, db_path=db_path))}")
+    for c in plan.below_threshold:
+        print(f"  {c.gap.item_id}  {_days(c.age.days)} old, blocked since {c.age.entered_on}: not yet "
+              f"(needs to be older than {_days(threshold)})")
+    for gap, age in plan.age_unknown:
+        print(f"  {gap.item_id}  age unknown: not promoted ({age.note})")
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Propose risk-log entries for unlogged blockers.")
     parser.add_argument("--db", default=str(DEFAULT_DB_PATH))
@@ -68,6 +114,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--tz", default="Asia/Colombo")
     parser.add_argument("--gateway", choices=["llm", "scripted"], default="llm")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--promotion-config", help="file to read the promotion threshold from")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--threshold-days", type=_non_negative, help="promotion threshold for this run, in days")
+    group.add_argument("--no-threshold", action="store_true", help="no age requirement for this run")
     return parser
 
 
@@ -77,21 +127,33 @@ def main(argv: list[str] | None = None) -> int:
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=timezone.utc)
     snapshot = build_current_snapshot(args.db, taken_at=moment.isoformat(), tz_name=args.tz)
+    try:
+        policy = _policy(args)
+    except PromotionConfigError as exc:
+        print(f"Promotion configuration problem, nothing was proposed: {exc}")
+        return 2
 
     blockers = current_blockers(snapshot)
     gaps = find_gaps(snapshot)
     print(f"Current blockers: {len(blockers)}; already in the risk log: {len(blockers) - len(gaps)}")
     print(f"Missing from the risk log: {', '.join(g.item_id for g in gaps) or 'none'}")
 
+    if policy is None:
+        print("Promotion threshold: none (every blocker missing from the risk log is proposed)")
+        if args.dry_run:
+            for gap in gaps:
+                owner = gap.owner.name if gap.owner else "no owner evidenced"
+                print(f"  {gap.item_id}  {gap.title}  (owner: {owner}; {gap.reference})")
+                print(f"      {_remembered(recall_for(gap, db_path=args.db))}")
+    else:
+        plan = plan_promotion(snapshot, policy, db_path=args.db)
+        _print_plan(plan, args.db, show_memory=args.dry_run)
+        gaps = [c.gap for c in plan.eligible]
     if args.dry_run:
-        for gap in gaps:
-            owner = gap.owner.name if gap.owner else "no owner evidenced"
-            print(f"  {gap.item_id}  {gap.title}  (owner: {owner}; {gap.reference})")
-            print(f"      {_remembered(recall_for(gap, db_path=args.db))}")
         print("Dry run: nothing was proposed.")
         return 0
 
-    results = detect_and_propose(snapshot, _gateway(args.gateway, gaps), db_path=args.db)
+    results = detect_and_propose(snapshot, _gateway(args.gateway, gaps), db_path=args.db, promotion=policy)
     store = ProposalStore(args.db)
     for r in results:
         if r.created:

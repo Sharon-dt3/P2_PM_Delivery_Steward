@@ -63,6 +63,7 @@ class BlockerGap:
     commitments: tuple[CommitmentEvidence, ...]
     commits: tuple[tuple[str, str], ...]  # (sha, message)
     source_message: tuple[str, str] | None  # (message id, body)
+    transition_note: str | None = None  # PM-19: the status transition the age was counted from
 
     @property
     def reference(self) -> str:
@@ -125,7 +126,8 @@ class BlockerGap:
     def evidence_text(self) -> str:
         """Everything known about this blocker as one line of text. It is what the
         model is shown and the only thing its words are checked against."""
-        parts = [f'{self.item_id} "{self.title}" is blocked.', self.owner_sentence(), self.blocked_sentence(), self.sprint_sentence(),
+        parts = [f'{self.item_id} "{self.title}" is blocked.', self.owner_sentence(), self.blocked_sentence(), self.transition_note,
+                 self.sprint_sentence(),
                  *self.commitment_sentences(), *self.commit_sentences(), self.message_sentence()]
         return " ".join(p for p in parts if p)
 
@@ -151,6 +153,15 @@ class BlockerGap:
             when = f"{_days(c.days_overdue)} overdue" if c.days_overdue else f"in {_days(c.days_until_due)}"
             parts.append(f"Commitment due {c.due_date_iso}, {when}.")
         return " ".join(parts) or "No sprint end, due date or blocked date is recorded for it."
+
+    def mitigation_text(self) -> str:
+        """PM-19: a plain next step built from the same facts, used when the model's own cannot be trusted."""
+        if self.owner:
+            return f'Confirm with {self.owner.name} what is needed to resolve "{self.title}" and agree a date.'
+        return f'Assign an owner to resolve "{self.title}" and agree a date.'
+
+    def mitigation_quote(self) -> str:
+        return self.description_quote()
 
     def impact_quote(self) -> str:
         return self.blocked_sentence() or self.sprint_sentence() or self.description_quote()

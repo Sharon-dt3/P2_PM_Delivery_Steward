@@ -60,6 +60,7 @@ from pm.jobs.snapshot_capture import capture_snapshot
 from pm.mirror.hook import mirrored
 from pm.reporting.facts import compute_morning_brief_facts
 from pm.reporting.morning_brief import MorningBrief, generate_morning_brief
+from pm.risk.promotion_config import PromotionConfigError, load_promotion_policy
 from pm.risk.proposals import detect_and_propose
 from pm.risklog.hook import pull_lead_edits_if_enabled
 from pm.scheduling.config import ProjectScheduleConfig
@@ -139,13 +140,20 @@ def run_morning_brief_job(
 
 
 def _propose_risks(snapshot, gateway, db_path) -> int:
-    """PM-16, when PM_RISK_DETECTION=1: propose a risk-log entry for each current blocker
-    that has none. Returns how many NEW proposals were made. Never raises: the brief
-    is already made, and a failure here must not take the scheduled job down."""
+    """PM-16/PM-19, when PM_RISK_DETECTION=1: propose a risk-log entry for each current blocker
+    that has none and is older than the configured threshold (no threshold configured: every
+    one). The threshold is read from configuration each run; an unusable configuration proposes
+    nothing rather than falling back to a guess. Returns how many NEW proposals were made.
+    Never raises: the brief is already made, and a failure here must not take the job down."""
     if os.environ.get("PM_RISK_DETECTION", "0") != "1":
         return 0
     try:
-        return sum(1 for r in detect_and_propose(snapshot, gateway, db_path=db_path) if r.created)
+        promotion = load_promotion_policy()
+    except PromotionConfigError as exc:
+        logger.warning("risk_promotion_config_unusable error=%s", exc)
+        return 0
+    try:
+        return sum(1 for r in detect_and_propose(snapshot, gateway, db_path=db_path, promotion=promotion) if r.created)
     except Exception as exc:  # noqa: BLE001
         logger.warning("risk_detection_failed error=%s: %s", type(exc).__name__, exc)
         return 0

@@ -13,6 +13,11 @@ A line that fails is retried, then dropped; its half of the proposal is then fil
 fixed template built from the same facts, so a real gap is never lost to a model failure.
 The suggested owner is never the model's: it is the tracker's assignee, or nobody.
 
+Promotion (PM-19, pm.risk.promotion): given a PromotionPolicy, only blockers that are OLDER than
+its configured threshold are proposed, the age is rebuilt from the status transitions, and each
+proposal also carries a drafted mitigation and the evidence of how long the blocker has been open.
+Without a policy this is exactly PM-16: every blocker missing from the risk log is proposed.
+
 Rejection memory (PM-17, pm.risk.memory): a rejected proposal keeps the fingerprint of the
 blocker's material facts, so a rerun does not propose it again; a material change allows
 a new proposal that states, in code, what changed. A proposal still awaiting a decision
@@ -40,6 +45,8 @@ from pm.mirror.hook import mirrored
 from pm.reporting.morning_brief import _check_line_content
 from pm.risk import memory
 from pm.risk.gaps import BlockerGap, find_gaps
+from pm.risk.promotion import PromotionCandidate, plan_promotion
+from pm.risk.promotion_config import PromotionPolicy
 from pm.state.snapshot import ProjectSnapshot
 from pm.storage.db import DEFAULT_DB_PATH
 
@@ -47,6 +54,14 @@ logger = logging.getLogger(__name__)
 
 RISK_PROPOSAL_TYPE = "risk_log_entry"
 RISK_PROPOSAL_CAPABILITY = "pm16_risk_proposal"
+PROMOTION_CAPABILITY = "pm19_risk_promotion"
+
+# Plain management verbs a MITIGATION line may use besides the evidence's own words. They name
+# an action, never a fact: no person, party, number, date or consequence is in this list.
+MITIGATION_VOCABULARY = (
+    "confirm agree assign resolve escalate prioritise prioritize review decide decision dependency plan unblock "
+    "follow need needs needed ask request check update next step action set owner clear what how whether"
+)
 
 _DURATION_RE = re.compile(r"(\d+)\s+days?\b", re.IGNORECASE)
 _ISO_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
@@ -72,11 +87,12 @@ class RiskProposalResult:
     state: str = memory.NEW  # new | already_proposed | rejected_unchanged | awaiting_decision | changed_since_rejection
 
 
-def _check_risk_line(line: FactualLine, evidence: str, gap: BlockerGap) -> str | None:
+def _check_risk_line(line: FactualLine, evidence: str, gap: BlockerGap, *, mitigation: bool = False) -> str | None:
     """The brief's content check, plus two the gap's arithmetic allows: any 'N days'
     must be a figure Python computed (a 9 hiding inside 2026-09-14 is not a duration),
-    and any date must be one the evidence states."""
-    problem = _check_line_content(line, evidence)
+    and any date must be one the evidence states. A mitigation line may also use the plain
+    management verbs in MITIGATION_VOCABULARY, and nothing else the evidence does not say."""
+    problem = _check_line_content(line, f"{evidence} {MITIGATION_VOCABULARY}" if mitigation else evidence)
     if problem:
         return problem
     allowed = gap.allowed_durations()
@@ -89,7 +105,7 @@ def _check_risk_line(line: FactualLine, evidence: str, gap: BlockerGap) -> str |
     return None
 
 
-def _ask_model(gap: BlockerGap, gateway, prompt) -> tuple[dict[str, str], list[dict], list[dict]]:
+def _ask_model(gap: BlockerGap, gateway, prompt, *, kinds_wanted=("description", "impact")) -> tuple[dict[str, str], list[dict], list[dict]]:
     """Returns (grounded text by kind, every grounded line, what grounding dropped)."""
     evidence = gap.evidence_text()
     kinds: dict[str, str] = {}
@@ -106,20 +122,22 @@ def _ask_model(gap: BlockerGap, gateway, prompt) -> tuple[dict[str, str], list[d
         return out
 
     result = ground_with_retry(
-        generate_fn, {gap.reference: evidence}.get, content_check=lambda line, source: _check_risk_line(line, source, gap)
+        generate_fn, {gap.reference: evidence}.get,
+        content_check=lambda line, source: _check_risk_line(line, source, gap, mitigation=kinds.get(line.text) == "mitigation"),
     )
     chosen: dict[str, str] = {}
     lines = []
     for line in result.grounded_lines:
         kind = kinds.get(line.text)
         lines.append({"kind": kind, "text": line.text, "reference_id": line.message_id, "quote": line.quote})
-        if kind in ("description", "impact") and kind not in chosen:
+        if kind in kinds_wanted and kind not in chosen:
             chosen[kind] = line.text
     dropped = [{"reason": f.reason, "detail": f.detail, "text": f.line.text} for f in result.failures]
     return chosen, lines, dropped
 
 
-def _readable(gap: BlockerGap, description: str, impact: str, change: dict | None = None) -> str:
+def _readable(gap: BlockerGap, description: str, impact: str, change: dict | None = None,
+              promotion: dict | None = None) -> str:
     owner = gap.owner
     owner_line = (
         f"{owner.name} ({owner.id}) - {owner.evidence}" if owner else "none - no owner is evidenced in the tracker"
@@ -129,14 +147,35 @@ def _readable(gap: BlockerGap, description: str, impact: str, change: dict | Non
         f"Blocker reference: {gap.reference}\n"
         f"Description: {description}\n"
         f"Impact: {impact}\n"
-        f"Suggested owner: {owner_line}\n"
+        + (
+            f"Open for: {_days(promotion['age']['days'])} (older than the {promotion['age']['threshold_days']}-day threshold; "
+            f"blocked since {promotion['age']['entered_on']})\n"
+            f"Drafted mitigation: {promotion['mitigation']}\n"
+            if promotion else ""
+        )
+        + f"Suggested owner: {owner_line}\n"
         + (f"{change['text']}\n" if change else "")
         + f"Evidence: {gap.evidence_text()}"
     )
 
 
+def _days(n: int) -> str:
+    return f"{n} day" if n == 1 else f"{n} days"
+
+
+def _age_evidence(candidate: PromotionCandidate, policy: PromotionPolicy, as_of: str) -> dict:
+    age, tracker = candidate.age, candidate.tracker_blocked_since
+    return {
+        "days": age.days, "threshold_days": policy.threshold_days, "entered_on": age.entered_on, "entered_at": age.entered_at,
+        "from_status": age.from_status, "source": age.source, "as_of": as_of,
+        "tracker_blocked_since": tracker, "disagrees": (tracker or "")[:10] != age.entered_on,
+    }
+
+
 def _evidence_entries(gap: BlockerGap) -> list[dict]:
     entries = [{"ref": gap.reference, "text": gap.evidence_text()}]
+    if gap.transition_note:
+        entries.append({"ref": f"transition:{gap.item_id}", "text": gap.transition_note})
     if gap.source_message:
         entries.append({"ref": f"message:{gap.source_message[0]}", "text": gap.message_sentence()})
     for sha, message in gap.commits:
@@ -173,6 +212,7 @@ def detect_and_propose(
     *,
     db_path: str | Path = DEFAULT_DB_PATH,
     prompt_registry: PromptRegistry | None = None,
+    promotion: PromotionPolicy | None = None,
 ) -> list[RiskProposalResult]:
     """One proposal per blocker missing from the risk log. Idempotent, and it remembers
     rejections (PM-17): a blocker already proposed with these same material facts, in any
@@ -180,10 +220,18 @@ def detect_and_propose(
     earlier proposal is still awaiting a decision is not piled on; one whose every earlier
     proposal was rejected is proposed again only if its material facts changed, and the
     new proposal states the change."""
-    gaps = find_gaps(snapshot)
+    candidates: dict[str, PromotionCandidate] = {}
+    if promotion is None:
+        gaps = find_gaps(snapshot)
+    else:
+        plan = plan_promotion(snapshot, promotion, db_path=db_path)
+        snapshot = plan.snapshot  # blocked_since rebuilt from the transitions
+        candidates = {c.gap.item_id: c for c in plan.eligible}
+        gaps = [c.gap for c in plan.eligible]
     if not gaps:
         return []
-    prompt = (prompt_registry or PromptRegistry()).get(RISK_PROPOSAL_CAPABILITY)
+    prompt = (prompt_registry or PromptRegistry()).get(RISK_PROPOSAL_CAPABILITY if promotion is None else PROMOTION_CAPABILITY)
+    kinds_wanted = ("description", "impact") if promotion is None else ("description", "impact", "mitigation")
     store = ProposalStore(db_path)
     results = []
     for gap in gaps:
@@ -198,7 +246,7 @@ def detect_and_propose(
         key = f"{RISK_PROPOSAL_TYPE}:{gap.item_id}:{memory.fingerprint(gap)}"
 
         try:
-            chosen, lines, dropped = _ask_model(gap, gateway, prompt)
+            chosen, lines, dropped = _ask_model(gap, gateway, prompt, kinds_wanted=kinds_wanted)
         except Exception as exc:  # noqa: BLE001 - a model that fails must not lose a real gap
             logger.warning("risk_prose_failed item=%s error=%s: %s", gap.item_id, type(exc).__name__, exc)
             chosen, lines, dropped = {}, [], [{"reason": "model_failed", "detail": f"{type(exc).__name__}: {exc}", "text": ""}]
@@ -209,6 +257,11 @@ def detect_and_propose(
             "description": "model" if "description" in chosen else "template",
             "impact": "model" if "impact" in chosen else "template",
         }
+        promoted = None
+        if promotion is not None:
+            mitigation = chosen.get("mitigation") or gap.mitigation_text()
+            prose_source["mitigation"] = "model" if "mitigation" in chosen else "template"
+            promoted = {"age": _age_evidence(candidates[gap.item_id], promotion, gap.as_of), "mitigation": mitigation}
         owner = gap.owner
         target = snapshot.channel.channel_id
         proposal = store.create(
@@ -230,14 +283,20 @@ def detect_and_propose(
                 "fingerprint": memory.fingerprint(gap),
                 "material_facts": memory.material_facts(gap),
                 "change": change,
-                "content": _readable(gap, description, impact, change),
+                **({"mitigation": promoted["mitigation"], "age": promoted["age"],
+                    "promotion": {"threshold_days": promotion.threshold_days, "source": promotion.source}} if promoted else {}),
+                "content": _readable(gap, description, impact, change, promoted),
                 "local_date": gap.as_of,
                 "channel_id": target,
                 "target_channel": target,
                 "snapshot_taken_at": snapshot.taken_at,
             },
-            original_model_output={"description": description, "impact": impact, "lines": lines, "dropped": dropped},
-            source_refs=sorted([*gap.evidence_refs(), *([f"proposal:{recalled.proposal.id}"] if change else [])]),
+            original_model_output={
+                "description": description, "impact": impact, **({"mitigation": promoted["mitigation"]} if promoted else {}),
+                "lines": lines, "dropped": dropped,
+            },
+            source_refs=sorted([*gap.evidence_refs(), *([f"transition:{gap.item_id}"] if gap.transition_note else []),
+                                *([f"proposal:{recalled.proposal.id}"] if change else [])]),
             idempotency_key=key,
         )
         write_audit(

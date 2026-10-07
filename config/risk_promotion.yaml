@@ -1,0 +1,14 @@
+# Blocker -> risk promotion (PM-19).
+#
+# A current blocker that is not in the risk log is proposed as a risk once it has been blocked
+# for MORE days than this: a blocker that is older than `threshold_days` is promoted, one that is
+# exactly that old, or younger, is not (yet). Age is counted in calendar days, from the status
+# transition that put the item into "blocked", in the project's timezone.
+#
+# This is the one place the number lives. Change it here (or override it for a run with the
+# environment variable PM_RISK_PROMOTION_THRESHOLD_DAYS, or for one command with
+# `scripts/detect_risks.py --threshold-days N`). Remove the file, or set the value to null, to
+# turn the age requirement off: every blocker missing from the risk log is then proposed (PM-16).
+#
+# Must be a whole number, 0 or more. Anything else is an error, never silently replaced.
+threshold_days: 2
