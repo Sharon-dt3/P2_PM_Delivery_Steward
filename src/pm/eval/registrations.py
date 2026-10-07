@@ -3,7 +3,7 @@ Wires every currently-known P2 golden case into a spine GoldenCaseRegistry.
 One line per capability, the same shape as P1's p1.eval.registrations: the
 harness itself (spine.eval) never changes when this file grows. PM-12 is
 the first (GC1, GC2); PM-14 adds GC6 (approval enforcement); later rows add
-theirs here. PM-18 adds GC4 (risk-log gap precision/recall and no duplicate); PM-20 adds GC5 (promotion threshold reconfiguration); PM-23 adds GC9 (determinism of the brief's facts).
+theirs here. PM-18 adds GC4 (risk-log gap precision/recall and no duplicate); PM-20 adds GC5 (promotion threshold reconfiguration); PM-23 adds GC9 (determinism of the brief's facts); PM-25 adds GC7 (the shared nudge cap and the order of reminder and escalation).
 """
 
 from __future__ import annotations
@@ -31,3 +31,7 @@ def register_all(registry: GoldenCaseRegistry, **kwargs) -> None:
     from pm.eval.pm23_cases import register as register_pm23
 
     register_pm23(registry)
+
+    from pm.eval.pm25_cases import register as register_pm25
+
+    register_pm25(registry)

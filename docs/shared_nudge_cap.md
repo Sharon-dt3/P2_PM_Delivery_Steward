@@ -40,3 +40,29 @@ P1_PEER_NUDGE_LEDGERS=/path/to/P2_PM_Delivery_Steward/data/pm.db
 `tests/unit/test_cross_agent_nudge_cap.py` runs P1's real nudge job and this agent's real follow-up against each other's
 databases, in both orders, for one person who is `wei.chen` here and a Graph user id in P1: whichever reminds her first, the
 other holds back; and a control run without P1's side shows she would otherwise be chased twice.
+
+## Golden case 7: how it is checked (PM-25)
+
+`src/pm/eval/pm25_cases.py` runs P1's real nudge job and P2's real follow-up against each other for three working days on the
+seed's commitments, each agent three times a day, with the first agent alternating. What is measured is what each agent actually
+SENT, recorded at its publisher, so a ledger that undercounts cannot make the numbers look right.
+
+| Metric | Must be | What it catches |
+|---|---|---|
+| `GC7-cap-breach-count` | 0 | a person (one person under P1's Graph id and P2's roster id) reminded more than the shared cap in a day, by both agents together |
+| `GC7-escalation-order-violation-count` | 0 | an escalation delivered without a reminder to that person about that commitment on an earlier day |
+| `GC7-repeat-count` | 0 | a second reminder or escalation about one commitment, or an exact resend, after three runs a day |
+| `GC7-schedule-mismatch-count` | 0 | anything delivered that is not in the hand-labelled schedule, or missing from it |
+| `GC7-ledger-delivery-mismatch-count` | 0 | either agent's ledger (the one the other agent's cap reads) differing from what it delivered |
+| `GC7-held-back-by-the-other-agent-count` | at least 4 | the cap really did hold each agent back, in both directions (so zero breaches is not vacuous) |
+| `GC7-refused-at-send-count` | at least 1 | a reminder approved late, after the other agent had already reminded the person, refused at the moment of sending |
+| `GC7-escalations-delivered-count` | at least 3 | the order rule was exercised |
+| `GC7-control-breach-count` | at least 1 | the same estate with the shared cap off on both sides does chase people twice |
+
+The schedule (who is reminded by which agent on which day, and who is escalated) is worked out by hand from the rules in the
+module's docstring, not read off a run. A reminder still waiting for a person's approval is not counted (Noah's first reminders
+from both agents on Friday); an approved reminder is checked again at the moment of sending (Mateo's on Tuesday).
+
+The queue inside one run ("one reminder a person a day, even while the first waits") and the check at the moment of sending both
+stop a person being reminded twice; either alone is enough, so removing only one is not visible in the delivered messages.
+`test_either_layer_alone_stops_a_second_reminder_in_one_run_but_not_neither` shows that removing both is.
