@@ -99,5 +99,5 @@ def build_scheduler(
         configs,
         to_spec=_to_end_of_day_spec,
         job_fn=run_end_of_day_job,
-        job_kwargs=lambda config: {"config": config, "db_path": db_path},
+        job_kwargs=lambda config: {"config": config, "gateway": gateway, "db_path": db_path, "publisher": publisher},
     )

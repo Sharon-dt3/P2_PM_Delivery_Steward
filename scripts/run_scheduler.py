@@ -40,6 +40,7 @@ for _path in (_REPO_ROOT / "src", _P1_REPO_ROOT / "src", _REPO_ROOT / "packages"
 
 
 from pm.approval.settings import describe_settings
+from pm.jobs.end_of_day_job import run_end_of_day_job
 from pm.jobs.morning_brief_job import run_morning_brief_job
 from pm.scheduling.config import (
     ProjectScheduleConfig,
@@ -57,11 +58,22 @@ def parse_at(text: str, tz_name: str) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
+class _ScriptedBoth:
+    """The scripted stand-in for the brief and for the end-of-day summary, told apart by their prompts."""
+
+    def __init__(self) -> None:
+        from pm.eval.pm12_cases import ScriptedGateway
+        from pm.reporting.scripted_summary import ScriptedSummaryGateway
+
+        self.brief, self.summary = ScriptedGateway(), ScriptedSummaryGateway()
+
+    def generate(self, prompt: str, **kwargs):
+        return (self.summary if "end-of-day summary" in prompt else self.brief).generate(prompt, **kwargs)
+
+
 def _gateway(kind: str):
     if kind == "scripted":
-        from pm.eval.pm12_cases import ScriptedGateway
-
-        return ScriptedGateway()
+        return _ScriptedBoth()
     from spine.llm.gateway import LLMGateway
 
     return LLMGateway()
@@ -84,9 +96,10 @@ def main(argv: list[str] | None = None, *, block: bool = True) -> int:
     parser.add_argument("--db", default=str(DEFAULT_DB_PATH))
     parser.add_argument("--gateway", choices=["llm", "scripted"], default="llm")
     mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--once", action="store_true", help="run the morning job once and exit")
+    mode.add_argument("--once", action="store_true", help="run one job once and exit (the morning brief unless --job says otherwise)")
     mode.add_argument("--print-schedule", action="store_true", help="show the schedule and exit")
     parser.add_argument("--at", help="with --once: act as if it were this time, in the project's timezone")
+    parser.add_argument("--job", choices=["morning", "end-of-day"], default="morning", help="with --once: which job to run")
     args = parser.parse_args(argv)
 
     config = default_project_schedule_config()
@@ -97,6 +110,16 @@ def main(argv: list[str] | None = None, *, block: bool = True) -> int:
         except ValueError:
             print(f"--at must look like 2026-09-16T08:00 (read in {config.timezone}); got {args.at!r}")
             return 2
+        if args.job == "end-of-day":
+            summary_result = run_end_of_day_job(config, _gateway(args.gateway), moment=moment, db_path=args.db)
+            print(f"{summary_result.status}: {summary_result.detail}")
+            if summary_result.summary is not None:
+                print(f"morning snapshot: {summary_result.morning_source}")
+                print(f"delivery: {summary_result.delivery_status}: {summary_result.delivery_detail}")
+                if summary_result.proposal_id:
+                    print(f"proposal: {summary_result.proposal_id}")
+                    print("next:     uv run python scripts/approve.py list")
+            return 0
         result = run_morning_brief_job(config, _gateway(args.gateway), moment=moment, db_path=args.db)
         print(f"{result.status}: {result.detail}")
         if result.brief is not None:

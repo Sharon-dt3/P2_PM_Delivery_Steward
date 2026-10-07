@@ -23,10 +23,9 @@ import hashlib
 
 from spine.prompts.registry import PromptRegistry
 
+from pm.reporting.end_of_day_summary import SUMMARY_CAPABILITY
 from pm.reporting.morning_brief import MORNING_BRIEF_CAPABILITY
 from pm.risk.proposals import PROMOTION_CAPABILITY
-
-SUMMARY_CAPABILITY = "pm22_end_of_day_summary"
 
 BRIEF, SUMMARY, MITIGATION = "brief", "summary", "mitigation"
 PROMPT_ROLES = {BRIEF: MORNING_BRIEF_CAPABILITY, SUMMARY: SUMMARY_CAPABILITY, MITIGATION: PROMOTION_CAPABILITY}

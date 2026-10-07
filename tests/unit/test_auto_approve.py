@@ -285,12 +285,13 @@ def test_a_failed_auto_send_leaves_it_approved_and_a_retry_sends_it_once(seeded_
 
 
 def test_if_the_policy_cannot_be_loaded_the_brief_is_proposed_not_sent(seeded_db_path, log, monkeypatch):
-    from pm.jobs import morning_brief_job
+    # the propose-and-maybe-send step lives in proposal_flow, shared by both jobs
+    from pm.jobs import proposal_flow
 
     def broken():
         raise RuntimeError("config unreadable")
 
-    monkeypatch.setattr(morning_brief_job, "load_approval_policy", broken)
+    monkeypatch.setattr(proposal_flow, "load_approval_policy", broken)
 
     result = run_morning_brief_job(_config(), ScriptedGateway(), moment=MON, db_path=seeded_db_path, publisher=log)
 

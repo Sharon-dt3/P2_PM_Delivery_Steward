@@ -81,12 +81,13 @@ def test_the_scheduler_registers_an_end_of_day_job_next_to_the_morning_one():
     assert str(trigger.timezone) == "Asia/Tokyo"
 
 
-def test_the_end_of_day_job_gets_no_model_and_the_morning_job_still_gets_one():
+def test_both_jobs_get_the_model():
+    """PM-22: the end-of-day job words the summary, so it is handed the same gateway as the morning job."""
     gateway = ScriptedGateway()
     scheduler = build_scheduler([_config()], gateway=gateway)
     jobs = {job.id: job for job in scheduler.get_jobs()}
 
-    assert "gateway" not in jobs[f"pm:end_of_day:{CHANNEL_ID}"].kwargs
+    assert jobs[f"pm:end_of_day:{CHANNEL_ID}"].kwargs["gateway"] is gateway
     assert jobs[f"pm:morning_brief:{CHANNEL_ID}"].kwargs["gateway"] is gateway
     assert scheduler.running is False
 

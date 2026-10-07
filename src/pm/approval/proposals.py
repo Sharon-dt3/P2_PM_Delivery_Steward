@@ -17,11 +17,14 @@ from pathlib import Path
 from spine.approval.proposals import Proposal, ProposalStore
 
 from pm.approval.audit import AGENT, write_audit
+from pm.reporting.end_of_day_facts import SECTION_ORDER as EOD_SECTION_ORDER
+from pm.reporting.end_of_day_summary import EndOfDaySummary
 from pm.reporting.morning_brief import SECTION_ORDER, MorningBrief
 from pm.scheduling.config import ProjectScheduleConfig
 from pm.storage.db import DEFAULT_DB_PATH
 
 BRIEF_PROPOSAL_TYPE = "morning_brief_publish"
+EOD_PROPOSAL_TYPE = "end_of_day_summary_publish"
 
 PROPOSED = "proposed"
 ALREADY_PROPOSED = "already_proposed"
@@ -35,6 +38,57 @@ def format_brief_message(label: str, local_date: str, content: str) -> str:
     """The exact text posted for a morning brief: an optional label, a dated
     title, then the brief itself and nothing else."""
     return f"{label}Morning brief — {local_date}\n\n{content}"
+
+
+def format_summary_message(label: str, local_date: str, content: str) -> str:
+    """The exact text posted for an end-of-day summary: an optional label, a dated title, then the summary."""
+    return f"{label}End-of-day summary — {local_date}\n\n{content}"
+
+
+def propose_end_of_day_summary(
+    summary: EndOfDaySummary,
+    config: ProjectScheduleConfig,
+    *,
+    local_date: str,
+    taken_at: str,
+    db_path: str | Path = DEFAULT_DB_PATH,
+) -> tuple[Proposal, bool]:
+    """Returns (proposal, created): one per target channel per local day, like the brief. Same shape as
+    the brief's proposal (payload = what would be posted and where; original_model_output = the lines with
+    their references and quotes and what grounding dropped), so the same gate handles both."""
+    target = config.publish_channel_id or config.channel_id
+    content = format_summary_message(config.message_label, local_date, summary.content)
+    key = f"{EOD_PROPOSAL_TYPE}:{target}:{local_date}"
+    store = ProposalStore(db_path)
+
+    existing = store.get_by_idempotency_key(key)
+    if existing is not None:
+        return existing, False
+
+    lines = [
+        {"section": section, "reference_id": line.message_id, "text": line.text, "quote": line.quote}
+        for section in EOD_SECTION_ORDER
+        for line in summary.sections[section]
+    ]
+    proposal = store.create(
+        type=EOD_PROPOSAL_TYPE,
+        payload={
+            "channel_id": config.channel_id,
+            "target_channel": target,
+            "local_date": local_date,
+            "snapshot_taken_at": taken_at,
+            "morning_taken_at": summary.facts.morning_taken_at,
+            "content": content,
+        },
+        original_model_output={"content": content, "lines": lines, "dropped": summary.dropped, "changed_items": summary.facts.changed_ids},
+        source_refs=sorted({line["reference_id"] for line in lines if line["reference_id"]}),
+        idempotency_key=key,
+    )
+    write_audit(
+        db_path, actor=AGENT, action="proposal.created", proposal_id=proposal.id,
+        details={"type": EOD_PROPOSAL_TYPE, "target": target, "local_date": local_date},
+    )
+    return proposal, True
 
 
 def propose_morning_brief(

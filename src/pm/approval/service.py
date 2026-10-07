@@ -37,7 +37,7 @@ from spine.approval.write_guard import WriteRefusedError, guarded_send
 
 from pm.adapters.teams import get_teams_publisher
 from pm.approval.audit import AGENT, AUTO_APPROVER, write_audit
-from pm.approval.proposals import BRIEF_PROPOSAL_TYPE
+from pm.approval.proposals import BRIEF_PROPOSAL_TYPE, EOD_PROPOSAL_TYPE
 from pm.mirror.hook import mirrored
 from pm.reporting.morning_brief import _AS_RECORDED
 from pm.scheduling.config import P1_CHANNEL_CONFIG_DIR
@@ -46,7 +46,7 @@ from pm.storage.db import DEFAULT_DB_PATH
 # The only proposal types this service can carry out. A risk-log entry (PM-16) is
 # reviewed here -- shown, rejected on the record -- but approving one would have
 # nothing to execute, so it is refused up front rather than left half-approved.
-EXECUTABLE_TYPES = frozenset({BRIEF_PROPOSAL_TYPE})
+EXECUTABLE_TYPES = frozenset({BRIEF_PROPOSAL_TYPE, EOD_PROPOSAL_TYPE})
 
 SENT = "sent"
 REJECTED_OUTCOME = "rejected"
@@ -121,6 +121,8 @@ def _summarize(proposal: Proposal) -> PendingApproval:
     target = payload.get("target_channel", "?")
     date = payload.get("local_date", "?")
     summary = f"Morning brief for {date} to {target}"
+    if proposal.type == EOD_PROPOSAL_TYPE:
+        summary = f"End-of-day summary for {date} to {target}"
     if proposal.type not in EXECUTABLE_TYPES:
         summary = f"Proposed risk log entry for {payload.get('item_id', '?')} ({payload.get('blocker_ref', '?')})"
     return PendingApproval(
@@ -306,7 +308,7 @@ def _dropped_count(proposal: Proposal) -> int:
 def _a_person_has_approved_one_before(store: ProposalStore, proposal: Proposal) -> bool:
     target = proposal.payload.get("target_channel")
     return any(
-        p.type == BRIEF_PROPOSAL_TYPE
+        p.type in EXECUTABLE_TYPES
         and p.payload.get("target_channel") == target
         and p.approver_id not in (None, AUTO_APPROVER)
         for p in store.list_by_status(APPLIED)
@@ -319,7 +321,7 @@ def _auto_hold_reason(proposal: Proposal, policy: ApprovalPolicy, publisher, sto
     explain_hold shows it, so they cannot disagree."""
     dropped = _dropped_count(proposal)
     if dropped or _AS_RECORDED in proposal.payload.get("content", ""):
-        return f"grounding dropped {dropped} line(s) in this brief; a person must review it"
+        return f"grounding dropped {dropped} line(s) in this message; a person must review it"
     if policy.auto_approve_requires_first_human and not _a_person_has_approved_one_before(store, proposal):
         return "waiting for a person to approve a first brief for this channel"
     return _out_of_scope(proposal, publisher, policy)

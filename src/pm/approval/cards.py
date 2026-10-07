@@ -17,6 +17,7 @@ from pathlib import Path
 
 from pm.approval import service
 from pm.approval.audit import AuditTrail
+from pm.approval.proposals import EOD_PROPOSAL_TYPE
 from pm.approval.service import ActionResult, ApprovalPolicy, PendingApproval
 from pm.storage.db import DEFAULT_DB_PATH
 
@@ -40,7 +41,8 @@ def pending_brief_card(pending: PendingApproval) -> dict:
     edits; Reject needs no input."""
     return _card(
         [
-            _text("Morning brief awaiting approval", size="Large", weight="Bolder"),
+            _text("End-of-day summary awaiting approval" if pending.type == EOD_PROPOSAL_TYPE else "Morning brief awaiting approval",
+                  size="Large", weight="Bolder"),
             {
                 "type": "FactSet",
                 "facts": [
