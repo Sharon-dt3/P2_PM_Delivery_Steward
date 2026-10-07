@@ -18,6 +18,7 @@ from pm.commitments.outcomes import (
     NOT_ON_ROSTER,
     MessageInfo,
     ingest_outcome_record,
+    ingest_record_file,
     is_commitment,
     load_outcome_file,
     resolve_due,
@@ -254,7 +255,7 @@ def test_the_committed_outcome_fixtures_add_nothing_because_they_hold_no_promise
     folder = REPO / "src" / "pm" / "seed" / "fixtures" / "outcomes" / "19_proj-gamma_thread.tacv2"
     statuses = []
     for path in sorted(folder.glob("*.json")):
-        statuses += [r.status for r in _ingest(tracker, load_outcome_file(path))]
+        statuses += [r.status for r in ingest_record_file(path, tracker=tracker, message_info=MESSAGES.get, roster=ROSTER)]
 
     assert ADDED not in statuses and CONSENT_WITHHELD in statuses and len(tracker.list()) == 8
 

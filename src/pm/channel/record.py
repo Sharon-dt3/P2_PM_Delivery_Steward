@@ -12,11 +12,13 @@ What it refuses, each with a code and a reason in words (a RecordRefused; nothin
   not_json             it is not JSON
   schema_invalid       it is JSON but not the published schema (a missing or mistyped field, a bad date, ...)
   unsupported_version  a major version this reader does not know (it reads 1.x, and tolerates fields added in a later 1.x)
-  not_allowlisted      the scope/consent flag is not exactly the JSON value true: P1 was not cleared to pass this
-                       channel's content on, so nothing is taken from it (PM-27's rule, applied at the door so nothing
-                       downstream can ever see such content)
+  not_allowlisted      the scope/consent flag is anything but the JSON value true: false, missing, null, "true", "yes", 1, a
+                       list. P1 was not cleared to pass this channel's content on, so nothing is taken from it (PM-27's
+                       rule, applied at the door so nothing downstream can ever see such content)
 
-The flag is checked after the schema, and the schema types it as a boolean, so "true", 1 and null never pass as true.
+The flag is looked at FIRST, before the schema or the version: a record whose flag is not exactly true is refused as not cleared
+whatever else is wrong with it. Nothing coerces it: P1's own model would turn "yes" into True, which is exactly why this reader
+does not use it.
 """
 
 from __future__ import annotations
@@ -37,7 +39,7 @@ UNREADABLE, NOT_JSON, SCHEMA_INVALID, UNSUPPORTED_VERSION, NOT_ALLOWLISTED = (
 )
 
 
-class RecordRefused(Exception):
+class RecordRefused(ValueError):
     """The record was not used. `code` is machine-readable, `reason` is for a person (and for the audit log)."""
 
     def __init__(self, code: str, reason: str) -> None:
@@ -98,6 +100,26 @@ def _problem(error: jsonschema.ValidationError) -> str:
     return f"{where}: {error.message[:160]}"
 
 
+def record_file(output_dir: str | Path, channel_id: str, day) -> Path:
+    """Where P1's contract puts a day's record: <dir>/<channel id, every character outside [A-Za-z0-9_.-] replaced by _>/<date>.json."""
+    return Path(output_dir) / re.sub(r"[^A-Za-z0-9_.-]", "_", channel_id) / f"{day}.json"
+
+
+def _flag_problem(data) -> str | None:
+    """Why the scope/consent flag is not an explicit true; None when it is. A file that is not an object has no flag to read:
+    the schema refuses it."""
+    if not isinstance(data, dict):
+        return None
+    if "allowlisted" not in data:
+        return "the scope/consent flag (allowlisted) is missing"
+    flag = data["allowlisted"]
+    if flag is True:
+        return None
+    if flag is False:
+        return "the scope/consent flag is false"
+    return f"the scope/consent flag is {flag!r}, not the JSON value true"
+
+
 def _major(version: str) -> int | None:
     match = re.fullmatch(r"(\d+)(?:\.\d+)*", version.strip())
     return int(match.group(1)) if match else None
@@ -115,6 +137,11 @@ def load_record(path: str | Path) -> ChannelRecord:
     except ValueError as exc:
         raise RecordRefused(NOT_JSON, f"{path.name} is not valid JSON ({exc})") from exc
 
+    problem = _flag_problem(data)
+    if problem:
+        where = f"{data['channel_id']} {data.get('date', '')}".strip() if isinstance(data.get("channel_id"), str) else path.name
+        raise RecordRefused(NOT_ALLOWLISTED, f"{where}: {problem}, so P1 was not cleared to pass this channel's content on and nothing is taken from it")
+
     errors = sorted(_schema_validator().iter_errors(data), key=lambda e: list(e.absolute_path))
     if errors:
         more = f" (and {len(errors) - 1} more)" if len(errors) > 1 else ""
@@ -123,11 +150,7 @@ def load_record(path: str | Path) -> ChannelRecord:
     version = data["schema_version"]
     if _major(version) != SUPPORTED_MAJOR:
         raise RecordRefused(UNSUPPORTED_VERSION, f"schema_version {version!r}: this reader knows version {SUPPORTED_MAJOR}.x only")
-    if data["allowlisted"] is not True:
-        raise RecordRefused(
-            NOT_ALLOWLISTED,
-            f"{data['channel_id']} {data['date']}: the scope/consent flag is not true, so P1 was not cleared to pass this channel's content on",
-        )
+    assert data["allowlisted"] is True  # the flag was checked first; the schema types it as a boolean
 
     def lines(key: str, section: str) -> tuple[Evidence, ...]:
         return tuple(Evidence(i["message_id"], i["text"], i.get("quote"), section) for i in data.get(key, []))

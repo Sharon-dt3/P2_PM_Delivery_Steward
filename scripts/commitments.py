@@ -36,9 +36,8 @@ from pm.commitments.ageing import ageing_view, format_ageing
 from pm.commitments.followup import load_followup_settings
 from pm.commitments.job import outcomes_dir, run_commitment_pass
 from pm.commitments.outcomes import (
-    ingest_outcome_record,
     ingest_recent_outcomes,
-    load_outcome_file,
+    ingest_record_file,
     message_lookup,
 )
 from pm.commitments.store import (
@@ -113,8 +112,8 @@ def main(argv: list[str] | None = None, *, publisher=None) -> int:
         if args.command == "ingest":
             path = Path(args.path)
             files = sorted(path.glob("*.json")) if path.is_dir() else [path]
-            results = [r for f in files for r in ingest_outcome_record(
-                load_outcome_file(f), tracker=tracker, message_info=lookup, roster=set(names), item_exists=lambda i: item_status(i) is not None)]
+            results = [r for f in files for r in ingest_record_file(
+                f, tracker=tracker, message_info=lookup, roster=set(names), item_exists=lambda i: item_status(i) is not None)]
         else:
             today = _moment(args.at, settings.timezone).astimezone(ZoneInfo(settings.timezone)).date()
             results = ingest_recent_outcomes(

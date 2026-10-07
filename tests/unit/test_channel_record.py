@@ -62,17 +62,23 @@ def test_a_later_minor_version_with_extra_fields_is_still_read(tmp_path):
     ("{ not json", "not_json"),
     ("[1, 2, 3]", "schema_invalid"),
     (record_dict(channel_id=None), "schema_invalid"),
-    ({k: v for k, v in record_dict().items() if k != "allowlisted"}, "schema_invalid"),  # the flag must be there at all
-    (record_dict(allowlisted="true"), "schema_invalid"),  # a string is not a boolean
-    (record_dict(allowlisted=1), "schema_invalid"),
-    (record_dict(allowlisted=None), "schema_invalid"),
+    ({k: v for k, v in record_dict().items() if k != "allowlisted"}, "not_allowlisted"),  # the flag must be there at all
+    (record_dict(allowlisted="true"), "not_allowlisted"),  # a string is not a boolean
+    (record_dict(allowlisted="yes"), "not_allowlisted"),
+    (record_dict(allowlisted=1), "not_allowlisted"),
+    (record_dict(allowlisted=None), "not_allowlisted"),
+    (record_dict(allowlisted=[True]), "not_allowlisted"),
+    (record_dict(allowlisted={"cleared": True}), "not_allowlisted"),
+    (record_dict(allowlisted=False, schema_version="2.0"), "not_allowlisted"),  # the flag is looked at first
+    ({k: v for k, v in record_dict(date="18 September").items() if k != "allowlisted"}, "not_allowlisted"),  # even in a file that is also malformed
     (record_dict(date="18 September"), "schema_invalid"),
     (record_dict(updates=[{"text": "no message id"}]), "schema_invalid"),
     (record_dict(roster="wei.chen"), "schema_invalid"),
     (record_dict(schema_version="2.0"), "unsupported_version"),
     (record_dict(schema_version="one"), "unsupported_version"),
     (record_dict(allowlisted=False), "not_allowlisted"),
-], ids=["missing-file", "not-json", "not-an-object", "null-channel", "flag-missing", "flag-string", "flag-one", "flag-null", "bad-date",
+], ids=["missing-file", "not-json", "not-an-object", "null-channel", "flag-missing", "flag-string", "flag-yes", "flag-one", "flag-null",
+        "flag-list", "flag-object", "flag-false-and-major-2", "flag-missing-and-malformed", "bad-date",
         "item-without-id", "roster-not-a-list", "major-2", "version-not-a-number", "not-allowlisted"])
 def test_anything_it_should_not_use_is_refused_with_a_code_and_a_reason(tmp_path, data, code):
     path = tmp_path / "nope.json" if data is None else write(tmp_path, data)
@@ -88,6 +94,23 @@ def test_only_an_explicit_true_passes_the_consent_flag(tmp_path):
     with pytest.raises(RecordRefused) as refused:
         load_record(write(tmp_path, record_dict(allowlisted=False), "off.json"))
     assert refused.value.code == "not_allowlisted" and "not cleared" in refused.value.reason
+
+
+@pytest.mark.parametrize("flag, words", [
+    (False, "is false"), ("yes", "'yes'"), (1, "1"), (None, "None"), ("missing", "missing"),
+], ids=["false", "yes", "one", "null", "missing"])
+def test_a_flag_refusal_says_which_flag_problem_it_was(tmp_path, flag, words):
+    data = {k: v for k, v in record_dict().items() if k != "allowlisted"} if flag == "missing" else record_dict(allowlisted=flag)
+
+    with pytest.raises(RecordRefused) as refused:
+        load_record(write(tmp_path, data))
+
+    assert refused.value.code == "not_allowlisted" and words in refused.value.reason and "not cleared" in refused.value.reason
+
+
+def test_a_refusal_is_a_value_error_so_a_caller_that_catches_bad_data_catches_it(tmp_path):
+    with pytest.raises(ValueError):
+        load_record(write(tmp_path, record_dict(allowlisted=False)))
 
 
 def test_a_refusal_names_what_was_wrong_in_words(tmp_path):

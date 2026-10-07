@@ -64,3 +64,31 @@ Nothing is written to the tracker or the risk log. Approving either proposal is 
 `tests/unit/test_channel_cross_agent.py`: P1's own code writes a record; P2 consumes the file in a process where `p1` cannot be
 imported, plans both batches and creates the proposals; and the copy of the schema here must equal the one P1 publishes.
 `tests/unit/test_channel_record.py` runs the reader alone with `p1` blocked.
+
+## Scope and consent: golden case 8 (PM-27)
+
+P1 carries a scope flag (`allowlisted`) into every record. It is what stops a channel that was never cleared from leaking into the
+tracker, the risk log or the commitments. **Only the JSON value `true` passes.** Missing, `false`, `null`, `"true"`, `"yes"`, `1`,
+`[true]`: all are refused as "not cleared", and the flag is looked at before anything else in the file. A record that is also not the
+schema, or of an unknown major version, is refused too, under its own code. A refused record produces zero proposals, adds nothing to
+the tracker, the risk log or the commitments, and leaves one row in the audit log (`record.refused`: the code, the reason, the file
+and which consumer refused it) per consumer per read.
+
+Both things in this agent that read a record go through the same reader (`pm.channel.record`): the proposal batches above, and the
+commitment feed (PM-24, `scripts/commitments.py ingest`, `ingest-recent`). Before PM-27 the feed read records through P1's own
+pydantic model, which turns `"true"`, `"yes"` and `1` into `True`: four of the eleven hostile records below added a commitment
+anyway, and six more crashed the feed with an uncaught validation error instead of being refused.
+
+`src/pm/eval/pm27_cases.py` writes one cleared record (twice: plain, and as a later 1.x version with fields this reader does not
+know) and eleven kinds of record that must not be used, every one carrying the same content (a commitment and a blocker, each
+naming a real tracker item, so a leak would show). Each is read twice by both consumers, each against its own database.
+
+| Metric | Must be | What it catches |
+|---|---|---|
+| `GC8-leaked-proposal-count` | 0 | a proposal made from a record that was refused |
+| `GC8-leaked-write-count` | 0 | a row a refused record added to the tracker, risk log or commitments |
+| `GC8-accepted-refusable-record-count` | 0 | a consumer that took a record it should have refused |
+| `GC8-refusal-log-mismatch-count` | 0 | a refusal row missing, extra, or under the wrong reason |
+| `GC8-wrongly-refused-count` | 0 | a cleared record refused (the control) |
+| `GC8-refused-record-count` | at least 11 | the eleven kinds really were refused, each for the labelled reason |
+| `GC8-cleared-control-output-count` | at least 6 | the cleared control really produced both batches and its commitment |

@@ -54,6 +54,7 @@ from pm.eval.pm18_cases import report as gc4_report
 from pm.eval.pm20_cases import report as gc5_report
 from pm.eval.pm23_cases import report as gc9_report
 from pm.eval.pm25_cases import report as gc7_report
+from pm.eval.pm27_cases import report as gc8_report
 from pm.eval.registrations import register_all
 from pm.eval.runner import main as print_golden_case_3
 from pm.prompts import format_prompts, prompt_record
@@ -92,6 +93,8 @@ def main() -> int:
     print(gc9_report())
     print()
     print(gc7_report())
+    print()
+    print(gc8_report())
     print()
 
     registry = GoldenCaseRegistry()

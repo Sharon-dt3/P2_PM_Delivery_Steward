@@ -9,8 +9,9 @@ fixed by end of week"); it shows up in the updates and decisions. The rules here
 - when each is due, resolved against the day it was said ("tomorrow", "end of week", "by Friday", an ISO date);
 - who made it: the author of the message the line cites, looked up in the channel's messages (an outcome record names
   no author); a line whose author is unknown or not on the project roster is not added, and is reported as such;
-- the record's consent flag: `allowlisted: false` means P1 was not cleared to pass the day's content on, so nothing
-  is taken from it.
+- the record's consent flag: anything but an explicit true means P1 was not cleared to pass the day's content on, so nothing
+  is taken from it (the file is read by pm.channel.record, which imports nothing of P1's and coerces nothing: P1's own model
+  would turn "yes" into True).
 
 Reading the same record again adds nothing: a commitment is keyed by the message it came from and its text.
 """
@@ -23,12 +24,13 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
 
-from p1.contracts.outcome_record import OutcomeRecord, read_outcome
-
+from pm.channel.gate import COMMITMENT_FEED, log_refusal
+from pm.channel.record import ChannelRecord, RecordRefused, load_record, record_file
 from pm.commitments.store import INGESTED, CommitmentTracker
 
 ADDED, ALREADY_KNOWN = "added", "already_known"
 NOT_A_COMMITMENT, NO_AUTHOR, NOT_ON_ROSTER, CONSENT_WITHHELD = "not_a_commitment", "no_author", "not_on_roster", "consent_withheld"
+REFUSED = "refused"  # the file is not the published contract (not JSON, not the schema, an unknown major version): nothing is taken
 
 # A promise to do something: first person future, or "will have / should land / done by". Not a report of what was done.
 # A bare "will be" is not enough ("no reminder will be sent" describes a rule); it counts only before a done-word.
@@ -87,7 +89,7 @@ class IngestResult:
 
 
 def ingest_outcome_record(
-    record: OutcomeRecord,
+    record: ChannelRecord,
     *,
     tracker: CommitmentTracker,
     message_info: Callable[[str], MessageInfo | None],
@@ -96,7 +98,7 @@ def ingest_outcome_record(
 ) -> list[IngestResult]:
     """Add each commitment in the record's updates and decisions to the store. Returns what happened to every line
     that was looked at, so nothing is silently skipped."""
-    if not record.allowlisted:
+    if record.allowlisted is not True:  # defence in depth: whatever read the file, only an explicit True is taken
         return [IngestResult(None, CONSENT_WITHHELD, detail=f"{record.channel_id} {record.date}: P1 was not cleared to pass this day's content on")]
 
     results: list[IngestResult] = []
@@ -119,14 +121,34 @@ def ingest_outcome_record(
             due_date_text=due_phrase, source_message_id=line.message_id, source="outcome",
         )
         if created:
-            tracker.record_event(commitment.id, INGESTED, record.date.isoformat(), f"from the outcome record for {record.date}")
+            tracker.record_event(commitment.id, INGESTED, str(record.date), f"from the outcome record for {record.date}")
         results.append(IngestResult(line.message_id, ADDED if created else ALREADY_KNOWN, commitment.id))
     return results
 
 
-def load_outcome_file(path: str | Path) -> OutcomeRecord:
-    """A record read back through the same model that wrote it (a malformed or hand-edited file fails loudly)."""
-    return OutcomeRecord.model_validate_json(Path(path).read_text())
+def load_outcome_file(path: str | Path) -> ChannelRecord:
+    """A record read through the published contract (pm.channel.record). A file that is not that contract, or that P1 was not
+    cleared to pass on, raises RecordRefused (a ValueError): it fails loudly, it is never read leniently."""
+    return load_record(path)
+
+
+def ingest_record_file(
+    path: str | Path,
+    *,
+    tracker: CommitmentTracker,
+    message_info: Callable[[str], MessageInfo | None],
+    roster: set[str],
+    item_exists: Callable[[str], bool] = lambda _id: True,
+) -> list[IngestResult]:
+    """One record FILE: refused (nothing added, one row in the audit log) unless it is the published contract with the consent
+    flag exactly true; otherwise its commitments are added."""
+    try:
+        record = load_record(path)
+    except RecordRefused as refusal:
+        log_refusal(tracker._db_path, path, refusal, consumer=COMMITMENT_FEED)
+        status = CONSENT_WITHHELD if refusal.code == "not_allowlisted" else REFUSED
+        return [IngestResult(None, status, detail=f"{Path(path).name}: {refusal.reason}")]
+    return ingest_outcome_record(record, tracker=tracker, message_info=message_info, roster=roster, item_exists=item_exists)
 
 
 def message_lookup(channel_id: str, db_path: str | Path) -> Callable[[str], MessageInfo | None]:
@@ -154,9 +176,8 @@ def ingest_recent_outcomes(
     no record, and add what they hold. Reading a day twice adds nothing, so the window can overlap from run to run."""
     results: list[IngestResult] = []
     for ago in range(days_back, -1, -1):
-        try:
-            record = read_outcome(channel_id, today - timedelta(days=ago), output_dir=output_dir)
-        except FileNotFoundError:
+        path = record_file(output_dir, channel_id, today - timedelta(days=ago))
+        if not path.exists():
             continue
-        results += ingest_outcome_record(record, tracker=tracker, message_info=message_info, roster=roster, item_exists=item_exists)
+        results += ingest_record_file(path, tracker=tracker, message_info=message_info, roster=roster, item_exists=item_exists)
     return results

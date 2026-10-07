@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import re
 import sys
 from pathlib import Path
 
@@ -35,6 +34,7 @@ for _path in (_REPO_ROOT / "src", _P1_REPO_ROOT / "src", _REPO_ROOT / "packages"
 from pm.adapters.risk_log import RiskLogMock
 from pm.adapters.tracker import TrackerMock
 from pm.channel.batches import TrackerView, consume
+from pm.channel.record import record_file
 from pm.storage.db import DEFAULT_DB_PATH
 
 
@@ -45,7 +45,7 @@ def outcomes_dir() -> Path:
 
 def record_path(channel_id: str, day: str) -> Path:
     """The published layout: outcomes/<channel id with every character outside [A-Za-z0-9_.-] replaced by _>/<date>.json."""
-    return outcomes_dir() / re.sub(r"[^A-Za-z0-9_.-]", "_", channel_id) / f"{day}.json"
+    return record_file(outcomes_dir(), channel_id, day)
 
 
 def _show_items(title: str, items: list[dict]) -> None:

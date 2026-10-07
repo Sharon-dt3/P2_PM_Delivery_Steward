@@ -32,18 +32,17 @@ This module imports nothing of P1's; neither does pm.channel.record.
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 
 from spine.approval.proposals import APPLIED, APPROVED, PENDING, REJECTED, ProposalStore
 
 from pm.approval.audit import AGENT, write_audit
+from pm.channel.gate import BATCHES, log_refusal
 from pm.channel.record import ChannelRecord, Evidence, RecordRefused, load_record
-from pm.storage.db import DEFAULT_DB_PATH, get_connection
+from pm.storage.db import DEFAULT_DB_PATH
 
 CHANNEL_TRACKER_PROPOSAL_TYPE = "channel_tracker_changes"
 CHANNEL_RISK_PROPOSAL_TYPE = "channel_risk_entries"
@@ -286,19 +285,6 @@ def _propose(set_name: str, proposal_type: str, items: list[dict], record: Chann
     return Batch(set_name, proposal.id, True, len(fresh), len(items) - len(fresh))
 
 
-def _log_refusal(db_path, path: Path, refusal: RecordRefused) -> None:
-    conn = get_connection(db_path)
-    try:
-        conn.execute(
-            "INSERT INTO audit (actor, action, entity_type, entity_id, details, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (AGENT, "record.refused", "outcome_record", path.name,
-             json.dumps({"code": refusal.code, "reason": refusal.reason, "file": str(path)}), datetime.now(timezone.utc).isoformat()),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-
 def consume(path: str | Path, view: TrackerView, *, db_path: str | Path = DEFAULT_DB_PATH, dry_run: bool = False) -> Consumed:
     """Read one record file and propose its two batches. A refused record gives zero proposals and one audit row (not in a dry run)."""
     path = Path(path)
@@ -306,7 +292,7 @@ def consume(path: str | Path, view: TrackerView, *, db_path: str | Path = DEFAUL
         record = load_record(path)
     except RecordRefused as refusal:
         if not dry_run:
-            _log_refusal(db_path, path, refusal)
+            log_refusal(db_path, path, refusal, consumer=BATCHES)
         return Consumed(None, refusal, None, None, [])
     plan = plan_batches(record, view)
     store = ProposalStore(db_path)
