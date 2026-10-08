@@ -33,6 +33,17 @@
               }
             ],
             "title": "Reason"
+          },
+          "severity": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Severity"
           }
         },
         "required": [
@@ -179,7 +190,7 @@
   "paths": {
     "/card_action": {
       "post": {
-        "description": "The card's Approve or Reject. WHO is acting is the X-Authenticated-User header, set by the flow from the Teams responder, never from the card or the body. Always answers 200 with an outcome: sent, rejected, refused, send_failed or held.",
+        "description": "The card's Approve or Reject. WHO is acting is the X-Authenticated-User header, set by the flow from the Teams responder, never from the card or the body. Always answers 200 with an outcome: sent (a message), applied (written to the risk log), rejected, refused, send_failed or held.",
         "operationId": "CardAction",
         "parameters": [
           {

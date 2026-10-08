@@ -3,8 +3,8 @@ end-of-day summary delivered through P1's publish adapter, and the risk log read
 
 What is real and tested here: the HTTP API (auth that fails closed, the identity taken from the platform and never from the request,
 the card JSON, the OpenAPI document a custom connector imports) and, above all, that a decision made from Teams leaves exactly the
-audit record the command line and the dashboard leave. What needs a tenant and a person in the Power Platform maker portal, and is
-not built here: the Copilot Studio agent and the Power Automate flows themselves (docs/copilot_studio/ says how to make them).
+audit record the command line and the dashboard leave. The connector, the approvals flow and the Copilot Studio agent are built by hand in
+the tenant's maker portal (docs/copilot_studio/ says how); none of that can run in a test.
 """
 
 from __future__ import annotations

@@ -117,6 +117,7 @@ class CardAction(BaseModel):
     action: str  # approve | reject
     proposal_id: str
     edited_content: str | None = None
+    severity: str | None = None  # low | medium | high: only for a risk-log proposal; unrated means medium, recorded as a default
     reason: str | None = None
 
 
@@ -163,7 +164,7 @@ def list_pending_approvals(_: Annotated[None, Depends(require_api_key)]) -> dict
 
 
 @app.post("/card_action", operation_id="CardAction", summary="Approve or reject from a card",
-          description="The card's Approve or Reject. WHO is acting is the X-Authenticated-User header, set by the flow from the Teams responder, never from the card or the body. Always answers 200 with an outcome: sent, rejected, refused, send_failed or held.")
+          description="The card's Approve or Reject. WHO is acting is the X-Authenticated-User header, set by the flow from the Teams responder, never from the card or the body. Always answers 200 with an outcome: sent (a message), applied (written to the risk log), rejected, refused, send_failed or held.")
 def card_action(
     body: CardAction,
     publisher: Annotated[Any, Depends(get_publisher)],

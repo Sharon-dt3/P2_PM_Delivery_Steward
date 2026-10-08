@@ -7,8 +7,9 @@ acting from the platform's authenticated identity (Copilot Studio's own user
 context) and never from the submitted data, then calls the same service
 functions as the command line -- enforcement stays in pm.approval.service.
 
-Not built: the Copilot Studio agent itself (needs a tenant). Same status as
-P1's CHN-25 connector; see docs/copilot_studio/ for the contract.
+Three kinds of card: a message (a brief, a summary, a reminder: edit box, Approve, Reject), a risk-log
+proposal (a severity picker, Approve, Reject: approving writes it to the risk log) and a tracker batch
+(Reject only: applying one is not built). See docs/copilot_studio/ for the contract.
 """
 
 from __future__ import annotations
@@ -23,7 +24,9 @@ from pm.approval.proposals import (
     ESCALATION_PROPOSAL_TYPE,
     NUDGE_PROPOSAL_TYPE,
 )
+from pm.approval.risk_apply import DEFAULT_SEVERITY
 from pm.approval.service import ActionResult, ApprovalPolicy, PendingApproval
+from pm.risklog.csv_store import SEVERITIES
 from pm.storage.db import DEFAULT_DB_PATH
 
 _SCHEMA = "http://adaptivecards.io/schemas/adaptive-card.json"
@@ -87,9 +90,35 @@ def pending_brief_card(pending: PendingApproval) -> dict:
     )
 
 
+def pending_risk_card(pending: PendingApproval) -> dict:
+    """The card for a risk-log proposal: what would be written, a severity to pick (the agent proposes none; the default
+    is medium and the audit records whether anyone chose), Approve (writes it to the risk log) and Reject. No edit box."""
+    return _card(
+        [
+            _text(pending.summary, size="Large", weight="Bolder"),
+            _text(pending.content, fontType="Monospace"),
+            _text("Approving writes this to the risk log. The agent does not rate severity: you do.", isSubtle=True),
+            {
+                "type": "Input.ChoiceSet", "id": "severity", "label": "Severity", "style": "compact", "value": DEFAULT_SEVERITY,
+                "choices": [{"title": s.capitalize(), "value": s} for s in SEVERITIES],
+            },
+        ],
+        [
+            {
+                "type": "Action.Submit", "title": "Approve", "style": "positive",
+                "data": {"action": "approve", "proposal_id": pending.proposal_id},
+            },
+            {
+                "type": "Action.Submit", "title": "Reject", "style": "destructive", "associatedInputs": "none",
+                "data": {"action": "reject", "proposal_id": pending.proposal_id},
+            },
+        ],
+    )
+
+
 def pending_proposal_only_card(pending: PendingApproval) -> dict:
     """The card for a proposal that can be read and rejected but not carried out (a
-    risk-log entry): no Approve, no edit box."""
+    batch of tracker changes): no Approve, no edit box."""
     return _card(
         [
             _text(pending.summary, size="Large", weight="Bolder"),
@@ -109,15 +138,23 @@ def decision_card(trail: AuditTrail) -> dict:
     """The card shown once a decision is made: who, when, what was proposed,
     what was applied."""
     verb = {"rejected": "Rejected"}.get(trail.status, "Approved")
+    writes_risk_log = trail.type in service.RISK_WRITE_TYPES
+    label = {EOD_PROPOSAL_TYPE: "End-of-day summary", NUDGE_PROPOSAL_TYPE: "Reminder", ESCALATION_PROPOSAL_TYPE: "Escalation"}.get(
+        trail.type, "Risk-log proposal" if writes_risk_log else "Morning brief"
+    )
+    if writes_risk_log:
+        outcome = {"title": "Written to the risk log as", "value": trail.sent["target"] if trail.sent else "not written"}
+    else:
+        outcome = {"title": "Sent to", "value": trail.sent["target"] if trail.sent else "not sent"}
     body = [
-        _text(f"Morning brief {verb.lower()}", size="Large", weight="Bolder"),
+        _text(f"{label} {verb.lower()}", size="Large", weight="Bolder"),
         {
             "type": "FactSet",
             "facts": [
                 {"title": verb + " by", "value": str(trail.approver_id)},
                 {"title": "At", "value": str(trail.decided_at)},
                 {"title": "Status", "value": trail.status},
-                {"title": "Sent to", "value": trail.sent["target"] if trail.sent else "not sent"},
+                outcome,
             ],
         },
         _text("What the agent proposed:", weight="Bolder"),
@@ -143,7 +180,7 @@ def handle_card_action(
     db_path: str | Path = DEFAULT_DB_PATH,
 ) -> dict:
     """What an Action.Submit posts back: {"action": "approve"|"reject",
-    "proposal_id": ..., "edited_content": ...}. `authenticated_user_id` is
+    "proposal_id": ..., "edited_content": ..., "severity": ...} (severity only for a risk-log proposal). `authenticated_user_id` is
     supplied by the platform, never read from `request`; anything in the
     request that looks like an approver is ignored."""
     proposal_id = request.get("proposal_id") if isinstance(request, dict) else None
@@ -155,9 +192,11 @@ def handle_card_action(
 
     if action == "approve":
         edited = request.get("edited_content")
+        severity = request.get("severity")
         outcome: ActionResult = service.approve_and_send(
             proposal_id, approver_id=authenticated_user_id,
             edited_content=edited if isinstance(edited, str) else None,
+            severity=severity if isinstance(severity, str) else None,
             publisher=publisher, policy=policy, db_path=db_path,
         )
     else:
@@ -169,6 +208,14 @@ def handle_card_action(
     return _result(outcome.proposal_id, outcome.outcome, outcome.detail)
 
 
+def _card_for(pending: PendingApproval) -> dict:
+    if pending.type in service.MESSAGE_TYPES:
+        return pending_brief_card(pending)
+    if pending.type in service.RISK_WRITE_TYPES:
+        return pending_risk_card(pending)
+    return pending_proposal_only_card(pending)
+
+
 def handle_list_pending(request: dict, *, db_path: str | Path = DEFAULT_DB_PATH) -> dict:
     """request: {} -- every proposal awaiting a decision, each with its card."""
     return {
@@ -176,7 +223,7 @@ def handle_list_pending(request: dict, *, db_path: str | Path = DEFAULT_DB_PATH)
             {
                 "proposal_id": p.proposal_id, "type": p.type, "target_channel": p.target_channel,
                 "local_date": p.local_date, "created_at": p.created_at, "summary": p.summary,
-                "card": pending_brief_card(p) if p.type in service.EXECUTABLE_TYPES else pending_proposal_only_card(p),
+                "card": _card_for(p),
             }
             for p in service.list_pending_approvals(db_path=db_path)
         ]

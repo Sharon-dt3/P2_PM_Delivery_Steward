@@ -400,8 +400,9 @@ def test_running_it_again_does_not_duplicate_anything(db):
     assert len(_proposals(db)) == 4 and not any(r.created for r in again)
 
 
-def test_promotion_proposals_cannot_be_approved_into_an_action(db):
+def test_approving_a_promotion_proposal_writes_its_drafted_mitigation_to_the_risk_log(db):
     from pm.approval import service
+    from pm.risklog.csv_store import CsvRiskLog, live_risk_log_path
 
     _run(db, policy=_policy(2))
     pid = _by_item(db)["PM-014"].id
@@ -409,7 +410,9 @@ def test_promotion_proposals_cannot_be_approved_into_an_action(db):
     outcome = service.approve_and_send(pid, approver_id="sharon.silva", policy=ApprovalPolicy(approver_ids=frozenset({"sharon.silva"})),
                                        db_path=db)
 
-    assert outcome.outcome == "refused" and ProposalStore(db).get(pid).status == PENDING
+    entry = next(r for r in CsvRiskLog(live_risk_log_path()).list_risks() if r.related_item_id == "PM-014")
+    assert outcome.outcome == "applied" and ProposalStore(db).get(pid).status == "applied"
+    assert "Mitigation:" in entry.description and entry.status == "open"
 
 
 # --- the morning job --------------------------------------------------------------------------------------------------------

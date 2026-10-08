@@ -19,6 +19,8 @@ from spine.approval.proposals import APPLIED, APPROVED, PENDING, REJECTED, Propo
 
 from pm.storage.db import DEFAULT_DB_PATH, get_connection
 
+RISK_WRITE_TYPES = frozenset({"risk_log_entry", "channel_risk_entries"})  # the proposal types approving which writes to the risk log
+
 AGENT = "agent"  # the actor recorded for things the system itself does
 AUTO_APPROVER = "system:auto-approve"  # the actor recorded when the system approves (see pm.approval.service)
 
@@ -98,7 +100,9 @@ def audit_trail(proposal_id: str, *, db_path: str | Path = DEFAULT_DB_PATH) -> A
         created_at=proposal.created_at,
         original_proposal=proposal.original_model_output,
         final_proposal=proposal.payload,
-        edited=proposal.original_model_output.get("content") != proposal.payload.get("content"),
+        # edited only means something for text a person can change; a risk-log proposal has no text of its own to edit
+        edited="content" in proposal.original_model_output
+        and proposal.original_model_output["content"] != proposal.payload.get("content"),
         approver_id=proposal.approver_id,
         decided_at=proposal.decided_at,
         sent=sent,
@@ -126,10 +130,17 @@ def describe(trail: AuditTrail) -> str:
         edited = " with edits" if trail.edited else " as proposed"
         lines.append(f"Approved by {trail.approver_id} at {trail.decided_at}{edited}.")
     if trail.status in (APPROVED, APPLIED):
-        if trail.sent:
+        writes_risk_log = trail.type in RISK_WRITE_TYPES
+        if trail.sent and writes_risk_log:
+            applied = next((e for e in reversed(trail.events) if e["action"] == "proposal.applied"), None)
+            rating = (applied or {}).get("details", {})
+            how = (f" Severity {rating['severity']} ({'chosen by the approver' if rating.get('severity_source') == 'approver' else 'the default: nobody rated it'})."
+                   if rating.get("severity") else "")
+            lines.append(f"Written to the risk log as {trail.sent['target']} at {trail.sent['created_at']}.{how}")
+        elif trail.sent:
             lines.append(f"Sent to {trail.sent['target']} at {trail.sent['created_at']}.")
         else:
-            lines.append("Not sent yet.")
+            lines.append("Not written to the risk log yet." if writes_risk_log else "Not sent yet.")
     lines += ["", "The agent originally proposed:", original]
     if trail.edited:
         lines += ["", "What was applied (edited):", trail.final_proposal.get("content", "")]

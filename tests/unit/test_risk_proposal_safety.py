@@ -1,10 +1,10 @@
 """PM-16: risk proposals ride the PM-13 approval gate, but they are not Teams posts.
 
-The gate's executor sends a morning brief to a channel. A risk proposal has nothing to
-send, and applying one (writing the entry into the risk log) is a later step, so the
-service must NOT try to execute it: approving one is refused up front (never left
-half-approved), auto-approve never touches it, and a person can still reject it, on
-the record. The dashboard shows it readably and offers Reject only.
+The gate's executor sends a message to a channel or a person. A risk proposal posts nothing: approving
+it WRITES the entry to the risk log (pm.approval.risk_apply; tests/unit/test_risk_approval.py covers that in
+depth). What stays true, and is tested here: only an approver can do it, an edited approval is refused, the
+type is never posted anywhere, auto-approve never touches it, and a person can still reject it, on the
+record. The dashboard shows it readably and offers Approve (with a severity) and Reject.
 
 Also: the morning job runs detection when PM_RISK_DETECTION=1, and scripts/detect_risks.py
 runs it on demand.
@@ -55,15 +55,19 @@ def _write_log_rows(db):
         conn.close()
 
 
-# --- approving, auto-approving or sending one is refused -------------------------------------------------------------
+# --- approving writes to the risk log and posts nothing; the rest of the gate still holds ------------------------------
 
 
-def test_approving_a_risk_proposal_is_refused_before_anything_is_approved(seeded_db_path, pending_id, log):
+def test_approving_a_risk_proposal_writes_it_to_the_risk_log_and_posts_nothing(seeded_db_path, pending_id, log):
+    from pm.risklog.csv_store import CsvRiskLog, live_risk_log_path
+
+    before = {r.id for r in CsvRiskLog(live_risk_log_path()).list_risks()}
     outcome = service.approve_and_send(pending_id, approver_id="sharon.silva", publisher=log, policy=POLICY, db_path=seeded_db_path)
 
-    assert outcome.outcome == "refused" and "risk" in outcome.detail.lower()
-    assert ProposalStore(seeded_db_path).get(pending_id).status == PENDING  # not stuck half-approved
-    assert log.read_log() == [] and _write_log_rows(seeded_db_path) == 0
+    assert outcome.outcome == "applied" and ProposalStore(seeded_db_path).get(pending_id).status == "applied"
+    written = {r.id for r in CsvRiskLog(live_risk_log_path()).list_risks()} - before
+    assert len(written) == 1 and log.read_log() == []  # one entry in the risk log; nothing posted to Teams
+    assert _write_log_rows(seeded_db_path) == 1  # and the write is on the same record as every send
 
 
 def test_an_edited_approval_is_refused_too(seeded_db_path, pending_id, log):
@@ -86,22 +90,27 @@ def test_the_explanation_says_why_it_is_waiting(seeded_db_path, pending_id, log)
     assert why and "risk" in why.lower() and "person" in why.lower()
 
 
-def test_sending_and_the_internal_executor_refuse_it_as_well(seeded_db_path, pending_id, log):
+def test_sending_and_the_internal_executor_refuse_a_proposal_nobody_approved(seeded_db_path, pending_id, log):
+    from pm.risklog.csv_store import CsvRiskLog, live_risk_log_path
+
     store = ProposalStore(seeded_db_path)
+    before = CsvRiskLog(live_risk_log_path()).list_risks()
 
     assert service.send_approved(pending_id, publisher=log, policy=POLICY, db_path=seeded_db_path).outcome == "refused"
     assert service._execute(pending_id, actor="agent", publisher=log, policy=POLICY, store=store, db_path=seeded_db_path).outcome == "refused"
-    assert log.read_log() == []
+    assert log.read_log() == [] and CsvRiskLog(live_risk_log_path()).list_risks() == before  # not approved: not written
 
 
-def test_even_a_risk_proposal_forced_to_approved_status_is_not_posted_anywhere(seeded_db_path, pending_id, log):
-    """Defence in depth: the executor itself refuses the type, whatever the status."""
+def test_a_risk_proposal_is_never_posted_anywhere_even_when_approved_around_the_service(seeded_db_path, pending_id, log):
+    """Defence in depth: the executor writes an approved risk proposal to the risk log (once) and posts nothing."""
     store = ProposalStore(seeded_db_path)
     store.approve(pending_id, approver_id="sharon.silva")  # bypassing the service on purpose
 
     outcome = service.send_approved(pending_id, publisher=log, policy=POLICY, db_path=seeded_db_path)
+    again = service.send_approved(pending_id, publisher=log, policy=POLICY, db_path=seeded_db_path)
 
-    assert outcome.outcome == "refused" and log.read_log() == [] and store.get(pending_id).status == APPROVED
+    assert outcome.outcome == "applied" and log.read_log() == [] and store.get(pending_id).status == "applied"
+    assert again.outcome == "refused"  # already applied: it is not written twice
 
 
 # --- a person can reject one, on the record ----------------------------------------------------------------------------
@@ -163,15 +172,17 @@ def _page_text(at):
     return "\n".join(parts)
 
 
-def test_the_dashboard_shows_a_risk_proposal_readably_and_offers_reject_only(dashboard, pending_id):
+def test_the_dashboard_shows_a_risk_proposal_readably_and_offers_approve_with_a_severity_and_reject(dashboard, pending_id):
     at = AppTest.from_file(dashboard, default_timeout=30).run()
 
     assert not at.exception, [e.value for e in at.exception]
     text = _page_text(at)
     assert "PM-014" in text and "Olivia Dupree" in text and "assignee of PM-014" in text
     keys = {b.key for b in at.button}
-    assert f"reject_{pending_id}" in keys and f"approve_{pending_id}" not in keys
-    assert "applying" in text.lower() or "not built" in text.lower()  # the page says why there is no Approve
+    assert f"reject_{pending_id}" in keys and f"approve_{pending_id}" in keys
+    assert at.selectbox(key=f"severity_{pending_id}").value == "medium"  # the agent rates nothing: the approver does
+    assert "writes this to the risk log" in text.lower()
+    assert f"edit_{pending_id}" not in {t.key for t in at.text_area}  # no edit box on a risk entry
 
 
 def test_rejecting_from_the_dashboard_works(dashboard, pending_id, seeded_db_path):

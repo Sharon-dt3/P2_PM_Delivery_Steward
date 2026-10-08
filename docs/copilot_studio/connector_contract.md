@@ -28,7 +28,7 @@ output and put it in this header; it must never copy it from the card data.** A 
 |---|---|---|
 | `GET /health` | none | status; whether a key and approvers are configured; whether a post would reach Teams or only a log (never a secret) |
 | `POST /list_pending_approvals` | `{}` | `{"approvals": [{proposal_id, type, target_channel, local_date, created_at, summary, card}]}`, each with its Adaptive Card |
-| `POST /card_action` | `{action: "approve"\|"reject", proposal_id, edited_content?, reason?}` | `{proposal_id, outcome, detail}`; `outcome` is `sent`, `rejected`, `refused`, `send_failed` or `held` |
+| `POST /card_action` | `{action: "approve"\|"reject", proposal_id, edited_content?, severity?, reason?}` | `{proposal_id, outcome, detail}`; `outcome` is `sent` (a message), `applied` (written to the risk log), `rejected`, `refused`, `send_failed` or `held` |
 | `POST /get_decision_card` | `{proposal_id}` | `{"card": ...}`: who decided, when, what was proposed, what was applied (404 for an unknown proposal) |
 | `POST /list_risks` | `{status?, severity?, related_item_id?}` | `{risks: [...], summary}` |
 | `POST /explain_risk` | `{risk_id}` | `{risk, related_item, explanation}` (404 for an unknown risk) |
@@ -42,8 +42,10 @@ Approving in Teams, on the command line (`scripts/approve.py`) and in the dashbo
 rejecting with and without a reason, and an approval or rejection by someone who may not, and compares every row written: the audit events,
 the send attempts and the proposal itself. They are equal.
 
-Proposals that are not a message (a risk-log gap entry, and the two batches made from P1's outcome record) are shown with a card that can
-be read and rejected but not approved: applying them is deliberately not built (`pm.approval.service.EXECUTABLE_TYPES`).
+Three kinds of card. A **message** (brief, summary, reminder, escalation): an edit box, Approve, Reject. A **risk-log proposal** (a gap entry, or
+the risk batch from P1's outcome record): a severity picker (`severity`, default medium), Approve (writes it to the risk log, outcome `applied`) and
+Reject; no edit box. A **tracker batch**: Reject only, because applying tracker changes is not built (`pm.approval.service.EXECUTABLE_TYPES`).
+The agent proposes no severity; the approver picks one, or `medium` is written and the audit says nobody chose.
 
 ## Not built (needs a tenant and a person in the maker portal)
 

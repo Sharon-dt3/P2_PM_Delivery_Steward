@@ -34,7 +34,10 @@ def _pending(policy, acting_as, db_path) -> None:
     if not pending:
         st.info("Nothing is awaiting approval.")
     for item in pending:
-        if item.type not in service.EXECUTABLE_TYPES:
+        if item.type in service.RISK_WRITE_TYPES:
+            _pending_risk_entry(item, policy, acting_as, db_path)
+            continue
+        if item.type not in service.MESSAGE_TYPES:
             _pending_proposal_only(item, policy, acting_as, db_path)
             continue
         with st.container(border=True):
@@ -70,16 +73,38 @@ def _pending(policy, acting_as, db_path) -> None:
                     _done("warning", result)
 
 
+def _pending_risk_entry(item, policy, acting_as, db_path) -> None:
+    """A risk-log proposal (PM-16 gap, PM-19 promotion, or a batch from a channel record): Approve writes it to the risk log, so the
+    approver rates the severity first (the agent proposes none). No edit box: a risk entry is approved as proposed or rejected."""
+    with st.container(border=True):
+        st.subheader(item.summary)
+        created = item.created_at.split(".")[0].replace("T", " ") + " UTC"
+        st.caption(f"proposal {item.proposal_id[:8]}… · proposed {created} · {item.type}")
+        st.caption("Approving writes this to the risk log (risk_log/risks.csv). Auto-approve never takes one: a person decides.")
+        with st.expander("What the agent proposed", expanded=True):
+            st.text(item.content)
+        severity = st.selectbox("Severity (the agent does not rate it)", ["medium", "low", "high"], key=f"severity_{item.proposal_id}")
+        reason = st.text_input("Reason, if rejecting (optional)", key=f"reason_{item.proposal_id}")
+        approve_col, reject_col = st.columns(2)
+        if acting_as:
+            if approve_col.button("Approve", key=f"approve_{item.proposal_id}", type="primary"):
+                result = service.approve_and_send(item.proposal_id, approver_id=acting_as, severity=severity, policy=policy, db_path=db_path)
+                _done("success" if result.outcome == service.APPLIED_OUTCOME else "warning", result)
+            if reject_col.button("Reject", key=f"reject_{item.proposal_id}"):
+                result = service.reject(item.proposal_id, approver_id=acting_as, reason=reason or None, policy=policy, db_path=db_path)
+                _done("warning", result)
+
+
 def _pending_proposal_only(item, policy, acting_as, db_path) -> None:
-    """A proposal this service can show and reject but not carry out (a risk-log
-    entry, PM-16): no Approve and no edit box, and the page says why."""
+    """A proposal this service can show and reject but not carry out (a batch of tracker
+    changes, PM-26): no Approve and no edit box, and the page says why."""
     with st.container(border=True):
         st.subheader(item.summary)
         created = item.created_at.split(".")[0].replace("T", " ") + " UTC"
         st.caption(f"proposal {item.proposal_id[:8]}… · proposed {created} · {item.type}")
         st.caption(
-            "Applying an approved proposal of this kind (a risk-log entry, or a batch from a channel record) is not built yet, so there is no Approve here: "
-            "you can read it and reject it. Nothing is written to the risk log or the tracker."
+            "Applying an approved batch of tracker changes is not built yet, so there is no Approve here: "
+            "you can read it and reject it. Nothing is written to the tracker."
         )
         with st.expander("What the agent proposed", expanded=True):
             st.text(item.content)
@@ -95,18 +120,15 @@ def _unsent(policy, acting_as, db_path) -> None:
     unsent = ProposalStore(db_path).list_by_status(APPROVED)
     if not unsent:
         return
-    st.header("Approved, not sent")
-    st.caption("These were approved but the send failed. Retrying sends them once.")
+    st.header("Approved, not carried out")
+    st.caption("These were approved but the send, or the write to the risk log, failed. Retrying does it once.")
     for proposal in unsent:
         with st.container(border=True):
-            st.write(
-                f"{proposal.payload.get('local_date', '?')} → "
-                f"{channel_name(proposal.payload.get('target_channel', '?'), p1_db_path())} "
-                f"· approved by {proposal.approver_id}"
-            )
-            if acting_as and st.button("Retry send", key=f"retry_{proposal.id}"):
+            where = "the risk log" if proposal.type in service.RISK_WRITE_TYPES else channel_name(proposal.payload.get("target_channel", "?"), p1_db_path())
+            st.write(f"{proposal.payload.get('local_date', '?')} → {where} · approved by {proposal.approver_id}")
+            if acting_as and st.button("Retry", key=f"retry_{proposal.id}"):
                 result = service.send_approved(proposal.id, policy=policy, db_path=db_path)
-                _done("success" if result.outcome == service.SENT else "warning", result)
+                _done("success" if result.outcome in (service.SENT, service.APPLIED_OUTCOME) else "warning", result)
 
 
 def _audit(db_path) -> None:

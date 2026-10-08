@@ -6,9 +6,9 @@ the Teams card calls, so a decision made here leaves the same records.
 
   list                              proposals awaiting a decision
   show   ID                         one proposal's text
-  approve ID --as WHO [--edit TEXT | --edit-file PATH]
+  approve ID --as WHO [--edit TEXT | --edit-file PATH] [--severity low|medium|high]
   reject  ID --as WHO [--reason TEXT]
-  retry   ID                        send an approved brief whose send failed
+  retry   ID                        redo an approved proposal whose send or risk-log write failed
   audit   ID                        who decided, when, original vs applied
 
 WHO must be listed in PM_APPROVER_IDS (comma-separated). The publisher is
@@ -50,6 +50,8 @@ def _parser() -> argparse.ArgumentParser:
     group = approve.add_mutually_exclusive_group()
     group.add_argument("--edit", help="replacement text to send instead of the proposal")
     group.add_argument("--edit-file", help="file holding the replacement text")
+    approve.add_argument("--severity", choices=["low", "medium", "high"],
+                         help="for a risk-log proposal: how serious it is (the agent does not rate it; unrated means medium, recorded as a default)")
     reject = sub.add_parser("reject")
     reject.add_argument("proposal_id")
     reject.add_argument("--as", dest="approver", required=True)
@@ -68,7 +70,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "list":
         pending = service.list_pending_approvals(**kwargs)
         for p in pending:
-            what = f"to {p.target_channel}" if p.type in service.EXECUTABLE_TYPES else p.summary
+            what = f"to {p.target_channel}" if p.type in service.MESSAGE_TYPES else p.summary
             print(f"{p.proposal_id}  {p.local_date}  {what}  proposed {p.created_at}")
         if not pending:
             print("Nothing is awaiting a decision.")
@@ -91,12 +93,14 @@ def main(argv: list[str] | None = None) -> int:
         edited = args.edit
         if args.edit_file:
             edited = Path(args.edit_file).read_text()
-        result = service.approve_and_send(args.proposal_id, approver_id=args.approver, edited_content=edited, **kwargs)
+        result = service.approve_and_send(
+            args.proposal_id, approver_id=args.approver, edited_content=edited, severity=args.severity, **kwargs
+        )
     else:
         result = service.reject(args.proposal_id, approver_id=args.approver, reason=args.reason, **kwargs)
 
     print(f"{result.outcome}: {result.detail}")
-    return 0 if result.outcome in (service.SENT, service.REJECTED_OUTCOME) else 1
+    return 0 if result.outcome in (service.SENT, service.APPLIED_OUTCOME, service.REJECTED_OUTCOME) else 1
 
 
 if __name__ == "__main__":

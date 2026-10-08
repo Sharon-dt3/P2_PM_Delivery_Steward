@@ -80,19 +80,32 @@ def test_a_reworded_item_says_what_it_replaces(batches, tmp_path):
     assert "replaces an earlier wording" in content and "The adapter payload shape is undocumented." in content
 
 
-def test_the_cards_for_a_batch_can_be_read_and_rejected_but_not_approved(batches):
+def test_the_tracker_batch_card_can_be_read_and_rejected_but_not_approved(batches):
     listed = cards.handle_list_pending({}, db_path=batches["db"])["approvals"]
 
-    by_id = {a["proposal_id"]: a for a in listed}
-    for key in ("tracker", "risk"):
-        card = by_id[batches[key]]["card"]
-        assert [a["title"] for a in card["actions"]] == ["Reject"]
-        text = json.dumps(card)
-        assert "not built yet" in text and "Project Gamma" in text
+    card = {a["proposal_id"]: a for a in listed}[batches["tracker"]]["card"]
+
+    assert [a["title"] for a in card["actions"]] == ["Reject"]
+    text = json.dumps(card)
+    assert "not built yet" in text and "Project Gamma" in text
 
 
-def test_the_batch_types_are_not_executable_so_approving_one_writes_nothing(batches):
-    assert CHANNEL_TRACKER_PROPOSAL_TYPE not in service.EXECUTABLE_TYPES and CHANNEL_RISK_PROPOSAL_TYPE not in service.EXECUTABLE_TYPES
+def test_the_risk_batch_card_offers_a_severity_to_pick_approve_and_reject(batches):
+    listed = cards.handle_list_pending({}, db_path=batches["db"])["approvals"]
+
+    card = {a["proposal_id"]: a for a in listed}[batches["risk"]]["card"]
+
+    assert [a["title"] for a in card["actions"]] == ["Approve", "Reject"]
+    (picker,) = [e for e in card["body"] if e.get("type") == "Input.ChoiceSet"]
+    assert picker["id"] == "severity" and picker["value"] == "medium" and [c["value"] for c in picker["choices"]] == ["low", "medium", "high"]
+    assert "Project Gamma" in json.dumps(card) and "Approving writes this to the risk log" in json.dumps(card)
+    assert not [e for e in card["body"] if e.get("type") == "Input.Text"]  # no edit box on a risk entry
+    assert card["actions"][1]["associatedInputs"] == "none"  # rejecting needs no severity
+
+
+def test_only_the_risk_batch_is_executable_the_tracker_batch_writes_nothing(batches):
+    assert CHANNEL_RISK_PROPOSAL_TYPE in service.EXECUTABLE_TYPES and CHANNEL_TRACKER_PROPOSAL_TYPE not in service.EXECUTABLE_TYPES
+    assert CHANNEL_RISK_PROPOSAL_TYPE not in service.MESSAGE_TYPES  # it is never posted, never auto-approved
 
 
 def test_rejecting_a_batch_from_teams_leaves_the_same_audit_record_as_the_command_line(batches, tmp_path, monkeypatch):

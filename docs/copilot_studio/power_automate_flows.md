@@ -31,7 +31,10 @@ Things that cost time and are now handled:
 ## Flow A: ask for approvals ("PM approvals in Teams"; built with a manual button trigger, use a Recurrence to schedule it)
 Fields as set in the new designer: `Action` = `data.action`, `Proposal Id` = `data.proposal_id`, `Edited Content` = `data.edited_content`
 (from the card response), `X-authenticated-user` = `responder.email` (from the Teams action's own output). `Reason` is not mapped: the card does not collect one.
-Proposals that cannot be applied (risk-log and tracker batches) get a card with Reject only.
+A risk-log proposal's card has a severity picker (`data.severity`), Approve and Reject; a tracker batch gets Reject only (applying it is not built).
+**Not yet mapped in the flow built on 2026-10-08:** it predates `severity`, so a Teams approval of a risk entry arrives with none and is written as
+`medium`, recorded in the audit as a default. To carry the pick: regenerate and re-import the connector file (`scripts/generate_openapi.py --connector
+URL --skip-ngrok-warning`), then set the new **Severity** field on "Approve or reject from a card" to `data.severity`.
 1. **Recurrence** (as built: Manually trigger a flow).
 2. **List pending approvals** (the connector). If the list is empty, stop.
 3. **Apply to each** approval:

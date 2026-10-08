@@ -20,8 +20,9 @@ source_refs. `fingerprint` identifies the item (set, kind, channel, message, ite
 twice, or regenerated later in the day, adds only what is new, and how a rejected item is not proposed again. A line whose wording
 changed is a new item, and says which earlier proposal and wording it replaces.
 
-Nothing here writes to the tracker or the risk log. The two proposals are decided by a person like every other, and approving one
-is deliberately not wired to a write (see pm.approval.service.EXECUTABLE_TYPES), exactly as for the risk-log gap proposals (PM-16).
+Nothing here writes to the tracker or the risk log. The two proposals are decided by a person like every other. Approving the risk
+batch writes its entries to the risk log (pm.approval.risk_apply); approving the tracker batch is refused, because applying tracker
+changes is not built (see pm.approval.service.EXECUTABLE_TYPES).
 
 A record that was not cleared (the scope/consent flag not true), or is not the published schema, is refused by pm.channel.record
 before anything is planned: zero proposals, and one row in the audit log saying why.

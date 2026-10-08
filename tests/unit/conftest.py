@@ -6,9 +6,8 @@ from pathlib import Path as _Path
 # The live risk log (risk_log/risks.csv) is data the delivery lead edits; tests run against
 # the frozen original three so a legitimate edit can never break the suite. This must be set
 # before anything imports pm.
-os.environ["PM_RISK_LOG_CSV"] = str(
-    _Path(__file__).resolve().parents[2] / "src" / "pm" / "seed" / "fixtures" / "risk_log_seed.csv"
-)
+_FROZEN_RISK_LOG = _Path(__file__).resolve().parents[2] / "src" / "pm" / "seed" / "fixtures" / "risk_log_seed.csv"
+os.environ["PM_RISK_LOG_CSV"] = str(_FROZEN_RISK_LOG)
 
 import sqlite3
 from collections.abc import Iterator
@@ -64,6 +63,11 @@ def _tests_never_touch_the_real_supabase_mirror(monkeypatch, tmp_path):
     monkeypatch.setenv("PM_SUPABASE_MIRROR", "0")
     monkeypatch.setenv("SUPABASE_DB_URL", "")
     monkeypatch.setenv("PM_RISK_LOG_SYNC", "0")  # likewise: no test may rewrite the committed risk log
+    # Approving a risk-log proposal WRITES to the risk log. Every test gets its own copy of the frozen original three, so a test that
+    # approves one (or a regression that lets one through) can never edit the fixture the rest of the suite reads.
+    own_copy = tmp_path / "risk_log_for_this_test.csv"
+    own_copy.write_bytes(_FROZEN_RISK_LOG.read_bytes())
+    monkeypatch.setenv("PM_RISK_LOG_CSV", str(own_copy))
     monkeypatch.setenv("PM_RISK_DETECTION", "0")  # risk detection is opt-in per test
     monkeypatch.setenv("PM_RISK_PROMOTION_CONFIG", str(tmp_path / "no_promotion_config.yaml"))  # no age requirement unless a test sets one
     monkeypatch.setenv("PM_RISK_PROMOTION_THRESHOLD_DAYS", "")

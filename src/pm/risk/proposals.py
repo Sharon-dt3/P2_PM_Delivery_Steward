@@ -23,8 +23,8 @@ blocker's material facts, so a rerun does not propose it again; a material chang
 a new proposal that states, in code, what changed. A proposal still awaiting a decision
 is not duplicated either.
 
-A proposal is only a proposal. Nothing is written to the risk log: approving it is
-deliberately not wired to any action (see pm.approval.service.EXECUTABLE_TYPES).
+A proposal is only a proposal until a person approves it. Nothing here writes to the risk log: approving one does, through the approval
+gate (pm.approval.risk_apply), with the severity the approver chooses, since the proposal carries none.
 """
 
 from __future__ import annotations

@@ -56,8 +56,10 @@ content on and nothing is taken from it. This is PM-27's rule, applied at the do
 
 ## What it does not do
 
-Nothing is written to the tracker or the risk log. Approving either proposal is a decision recorded in the audit trail, not a write
-(see `pm.approval.service.EXECUTABLE_TYPES`), the same as the risk-log gap proposals. Applying an approved batch is not built.
+Consuming a record writes nothing to the tracker or the risk log: both batches are proposals. Approving the **risk-log batch** writes its
+entries to the risk log (`pm.approval.risk_apply`: the next RISK id, each entry carrying the channel message that justifies it, severity chosen
+by the approver or `medium` recorded as a default, a blocker that already has an open risk skipped and the skip recorded). Approving the
+**tracker batch** is refused: applying tracker changes is not built, so it can only be rejected.
 
 ## How the claim "no shared code" is checked
 

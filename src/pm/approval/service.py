@@ -14,13 +14,17 @@ records. Rules enforced here, never in a surface:
 - an edit replaces what is sent but never what the agent originally proposed;
 - a real (non-log) publisher may only post to a channel on P1's allowlist, and
   that is checked BEFORE approving, so an out-of-scope proposal cannot be
-  approved into a stuck state.
+  approved into a stuck state;
+- approving a risk-log proposal writes to the risk log through the same gate
+  (guarded_send), after pm.approval.risk_apply has checked it can be written, so
+  nothing is left approved-but-not-applied; a tracker batch has nothing to
+  execute yet, so it can only be rejected.
 """
 
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -36,7 +40,10 @@ from spine.approval.proposals import (
 )
 from spine.approval.write_guard import WriteRefusedError, guarded_send
 
+from pm.adapters.risk_log import RiskLogStore
 from pm.adapters.teams import get_teams_publisher
+from pm.adapters.tracker import TrackerMock
+from pm.approval import risk_apply
 from pm.approval.audit import AGENT, AUTO_APPROVER, write_audit
 from pm.approval.proposals import (
     BRIEF_PROPOSAL_TYPE,
@@ -49,16 +56,21 @@ from pm.channel.batches import CHANNEL_RISK_PROPOSAL_TYPE, CHANNEL_TRACKER_PROPO
 from pm.commitments import delivery
 from pm.mirror.hook import mirrored
 from pm.reporting.morning_brief import _AS_RECORDED
+from pm.risk.proposals import RISK_PROPOSAL_TYPE
+from pm.risklog.csv_store import CsvRiskLog
 from pm.scheduling.config import P1_CHANNEL_CONFIG_DIR
 from pm.storage.db import DEFAULT_DB_PATH
 
-# The only proposal types this service can carry out. A risk-log entry (PM-16) is
-# reviewed here -- shown, rejected on the record -- but approving one would have
-# nothing to execute, so it is refused up front rather than left half-approved.
-EXECUTABLE_TYPES = frozenset({BRIEF_PROPOSAL_TYPE, EOD_PROPOSAL_TYPE}) | DIRECT_MESSAGE_TYPES
-CHANNEL_BATCH_TYPES = frozenset({CHANNEL_TRACKER_PROPOSAL_TYPE, CHANNEL_RISK_PROPOSAL_TYPE})  # PM-26: proposals only; approving writes nothing
+# What this service can carry out. A message is posted or sent (a brief, an end-of-day summary, a reminder, an escalation); a risk-log
+# proposal is written to the risk log (pm.approval.risk_apply). Everything else -- a batch of tracker changes -- is reviewed here and
+# rejected on the record, but approving one would have nothing to execute, so it is refused up front rather than left half-approved.
+MESSAGE_TYPES = frozenset({BRIEF_PROPOSAL_TYPE, EOD_PROPOSAL_TYPE}) | DIRECT_MESSAGE_TYPES
+RISK_WRITE_TYPES = risk_apply.RISK_WRITE_TYPES
+EXECUTABLE_TYPES = MESSAGE_TYPES | RISK_WRITE_TYPES
+CHANNEL_BATCH_TYPES = frozenset({CHANNEL_TRACKER_PROPOSAL_TYPE, CHANNEL_RISK_PROPOSAL_TYPE})  # PM-26: batches from P1's outcome record
 
 SENT = "sent"
+APPLIED_OUTCOME = "applied"  # a risk-log proposal written to the risk log
 REJECTED_OUTCOME = "rejected"
 REFUSED = "refused"
 SEND_FAILED = "send_failed"
@@ -117,7 +129,7 @@ def _not_executable(proposal: Proposal) -> str | None:
     if proposal.type in EXECUTABLE_TYPES:
         return None
     return (
-        f"a {proposal.type} proposal cannot be approved or sent: applying an approved risk entry "
+        f"a {proposal.type} proposal cannot be approved: applying an approved tracker change "
         "is not built, so approving it would do nothing. It can be reviewed and rejected"
     )
 
@@ -167,7 +179,7 @@ def _summarize(proposal: Proposal) -> PendingApproval:
         summary = f"Escalation to {payload.get('recipient_name') or target} about commitment #{payload.get('commitment_id')}"
     if proposal.type in CHANNEL_BATCH_TYPES:
         return _summarize_batch(proposal)
-    if proposal.type not in EXECUTABLE_TYPES:
+    if proposal.type == RISK_PROPOSAL_TYPE:
         summary = f"Proposed risk log entry for {payload.get('item_id', '?')} ({payload.get('blocker_ref', '?')})"
     return PendingApproval(
         proposal_id=proposal.id, type=proposal.type, target_channel=target, local_date=date,
@@ -209,28 +221,40 @@ def approve_and_send(
     *,
     approver_id: str,
     edited_content: str | None = None,
+    severity: str | None = None,
     publisher=None,
     policy: ApprovalPolicy | None = None,
     store: ProposalStore | None = None,
+    risk_log: RiskLogStore | None = None,
     db_path: str | Path = DEFAULT_DB_PATH,
     now: datetime | None = None,
 ) -> ActionResult:
     """Approve a pending proposal -- optionally with edited text -- and execute
-    it through the adapter in the same call."""
+    it in the same call: a message through the adapter, a risk-log proposal into the
+    risk log (`severity` is the approver's rating for it; unrated means the default,
+    and the audit says so)."""
     policy = policy if policy is not None else load_approval_policy()
     store = store or ProposalStore(db_path)
 
     if not _is_approver(approver_id, policy):
         return _deny(db_path, approver_id, proposal_id, "approve", "not an authorised approver")
     approver = approver_id.strip()
+    publisher_problem = None
     try:
         publisher = publisher if publisher is not None else get_teams_publisher()
-    except Exception as exc:  # noqa: BLE001 - a misconfigured publisher means nothing is approved, nothing raised
-        return ActionResult(proposal_id, REFUSED, f"publisher not available: {type(exc).__name__}: {exc}")
+    except Exception as exc:  # noqa: BLE001 - a misconfigured publisher means no message is approved, nothing raised
+        publisher_problem = f"publisher not available: {type(exc).__name__}: {exc}"
     try:
         proposal = store.get(proposal_id)
     except ProposalNotFoundError:
-        return ActionResult(proposal_id, REFUSED, f"no proposal with id {proposal_id!r}")
+        return ActionResult(proposal_id, REFUSED, publisher_problem or f"no proposal with id {proposal_id!r}")
+
+    if proposal.type in RISK_WRITE_TYPES:  # writes to the risk log, posts nothing: a missing publisher does not matter
+        return _approve_risk_entries(
+            proposal, approver=approver, edited_content=edited_content, severity=severity, risk_log=risk_log, store=store, db_path=db_path,
+        )
+    if publisher_problem:
+        return ActionResult(proposal_id, REFUSED, publisher_problem)
 
     unsupported = _not_executable(proposal)
     if unsupported:
@@ -264,6 +288,33 @@ def approve_and_send(
         )
     write_audit(db_path, actor=approver, action="proposal.approved", proposal_id=proposal_id, details={"edited": edited})
     return _execute(proposal_id, actor=approver, publisher=publisher, policy=policy, store=store, db_path=db_path, now=now)
+
+
+def _approve_risk_entries(
+    proposal: Proposal, *, approver: str, edited_content: str | None, severity: str | None, risk_log: RiskLogStore | None,
+    store: ProposalStore, db_path,
+) -> ActionResult:
+    """Approve a risk-log proposal: check it can be written (and the severity is valid) BEFORE approving, record the approval with the
+    severity and where it came from, then write. A refusal is audited and leaves the proposal pending."""
+    pid = proposal.id
+    # A risk card has no edit box, so a flow that maps the card's edited_content sends nothing or a blank: that is "not edited".
+    if edited_content and _normalise(edited_content) and _normalise(edited_content) != _normalise(proposal.payload.get("content", "")):
+        return _deny(db_path, approver, pid, "approve", "a risk-log proposal cannot be edited here: approve it as proposed, reject it, or change the risk log itself")
+    try:
+        chosen, source = risk_apply.choose_severity(severity)
+        final_payload = {**proposal.payload, "approved_severity": chosen, "severity_source": source}
+        risk_apply.plan_writes(
+            replace(proposal, payload=final_payload), risk_log=risk_log or CsvRiskLog(), tracker=TrackerMock(db_path=db_path),
+        )
+    except risk_apply.RiskApplyRefused as exc:
+        return _deny(db_path, approver, pid, "approve", str(exc))
+    try:
+        store.approve(pid, approver_id=approver, payload=final_payload)
+    except IllegalTransitionError as exc:
+        return ActionResult(pid, REFUSED, str(exc))
+    write_audit(db_path, actor=approver, action="proposal.approved", proposal_id=pid,
+                details={"edited": False, "severity": chosen, "severity_source": source})
+    return _execute(pid, actor=approver, publisher=None, policy=None, store=store, db_path=db_path, risk_log=risk_log)
 
 
 def approve_automatically(
@@ -310,6 +361,7 @@ def send_approved(
     publisher=None,
     policy: ApprovalPolicy | None = None,
     store: ProposalStore | None = None,
+    risk_log: RiskLogStore | None = None,
     db_path: str | Path = DEFAULT_DB_PATH,
     now: datetime | None = None,
 ) -> ActionResult:
@@ -318,6 +370,12 @@ def send_approved(
     clock a direct message's rules are judged by (a demo or a test can set it)."""
     policy = policy if policy is not None else load_approval_policy()
     store = store or ProposalStore(db_path)
+    try:
+        wanted = store.get(proposal_id)
+    except ProposalNotFoundError:
+        wanted = None
+    if wanted is not None and wanted.type in RISK_WRITE_TYPES:  # a retry of a risk-log write posts nothing
+        return _execute(proposal_id, actor=AGENT, publisher=None, policy=policy, store=store, db_path=db_path, risk_log=risk_log)
     try:
         publisher = publisher if publisher is not None else get_teams_publisher()
     except Exception as exc:  # noqa: BLE001 - reported, never raised past this seam
@@ -350,14 +408,51 @@ def _execute_direct_message(proposal: Proposal, *, actor: str, publisher, store:
     return ActionResult(proposal.id, SENT, f"sent to {recipient}")
 
 
+def _execute_risk_write(proposal: Proposal, *, actor: str, store: ProposalStore, db_path, risk_log: RiskLogStore | None) -> ActionResult:
+    """Write an approved risk-log proposal to the risk log, through the same gate as a send: guarded_send refuses anything not approved,
+    logs the attempt, and marks the proposal applied. What is written is planned again here from the approved proposal, so a retry
+    after a failed write sees the log as it is now."""
+    risk_log = risk_log or CsvRiskLog()
+    try:
+        plan = risk_apply.plan_writes(proposal, risk_log=risk_log, tracker=TrackerMock(db_path=db_path))
+    except risk_apply.RiskApplyRefused as exc:
+        write_audit(db_path, actor=actor, action="proposal.send_refused", proposal_id=proposal.id, details={"reason": str(exc)})
+        return ActionResult(proposal.id, REFUSED, str(exc))
+    ids = [r.id for r in plan.entries]
+
+    def write() -> None:
+        for entry in plan.entries:
+            risk_log.create_risk(entry)
+
+    try:
+        guarded_send(proposal.id, action_type="risk_log_write", target=",".join(ids), send_fn=write, store=store, db_path=db_path)
+    except WriteRefusedError as exc:
+        return ActionResult(proposal.id, REFUSED, str(exc))
+    except Exception as exc:  # noqa: BLE001 - guarded_send already logged send_failed; report, never raise
+        write_audit(db_path, actor=actor, action="proposal.send_failed", proposal_id=proposal.id,
+                    details={"error": f"{type(exc).__name__}: {exc}"[:300]})
+        return ActionResult(proposal.id, SEND_FAILED, f"{type(exc).__name__}: {exc}")
+    runtime = risk_apply.refresh_runtime_copy(risk_log, db_path)
+    write_audit(
+        db_path, actor=actor, action="proposal.applied", proposal_id=proposal.id,
+        details={"target": "risk_log", "risk_ids": ids, "severity": plan.severity, "severity_source": plan.severity_source,
+                 "skipped": list(plan.skipped), "runtime_copy": runtime},
+    )
+    skipped = f" ({len(plan.skipped)} already covered, not written)" if plan.skipped else ""
+    return ActionResult(proposal.id, APPLIED_OUTCOME, f"wrote {', '.join(ids)} to the risk log{skipped}")
+
+
 def _execute(
-    proposal_id: str, *, actor: str, publisher, policy: ApprovalPolicy, store: ProposalStore, db_path, now: datetime | None = None,
+    proposal_id: str, *, actor: str, publisher, policy: ApprovalPolicy | None, store: ProposalStore, db_path, now: datetime | None = None,
+    risk_log: RiskLogStore | None = None,
 ) -> ActionResult:
     try:
         proposal = store.get(proposal_id)
     except ProposalNotFoundError:
         return ActionResult(proposal_id, REFUSED, f"no proposal with id {proposal_id!r}")
-    unsupported = _not_executable(proposal)  # defence in depth: whatever its status, only a brief is posted
+    if proposal.type in RISK_WRITE_TYPES:
+        return _execute_risk_write(proposal, actor=actor, store=store, db_path=db_path, risk_log=risk_log)
+    unsupported = _not_executable(proposal)  # defence in depth: whatever its status, only a message or a risk-log write is carried out
     if unsupported:
         return ActionResult(proposal_id, REFUSED, unsupported)
     scope_problem = _out_of_scope(proposal, publisher, policy)
@@ -399,7 +494,7 @@ def _dropped_count(proposal: Proposal) -> int:
 def _a_person_has_approved_one_before(store: ProposalStore, proposal: Proposal) -> bool:
     target = proposal.payload.get("target_channel")
     return any(
-        p.type in EXECUTABLE_TYPES
+        p.type in MESSAGE_TYPES
         and p.payload.get("target_channel") == target
         and p.approver_id not in (None, AUTO_APPROVER)
         for p in store.list_by_status(APPLIED)
@@ -438,8 +533,8 @@ def explain_hold(
         return f"already {proposal.status}: nothing is waiting"
     if proposal.type in DIRECT_MESSAGE_TYPES:
         return "a reminder or an escalation: it is sent under the commitment follow-up's rules, or when a person approves it"
-    if proposal.type not in EXECUTABLE_TYPES:
-        return "this is a risk log entry proposal: auto-approve never takes it, so a person has to decide (it can only be rejected for now)"
+    if proposal.type not in MESSAGE_TYPES:
+        return "this proposal changes the risk log or the tracker: auto-approve never takes it, so a person has to decide"
     if not policy.auto_approve:
         return "auto-approve is off, so a person has to decide"
     try:
@@ -483,8 +578,8 @@ def auto_approve_and_send(
         return ActionResult(proposal_id, REFUSED, f"proposal is {proposal.status!r}, not pending")
     if proposal.type in DIRECT_MESSAGE_TYPES:
         return _held(proposal_id, "a reminder or an escalation is approved by the commitment follow-up's own rules or by a person, never by brief auto-approve")
-    if proposal.type not in EXECUTABLE_TYPES:
-        return _held(proposal_id, "a risk log entry proposal is never auto-approved; a person has to decide")
+    if proposal.type not in MESSAGE_TYPES:
+        return _held(proposal_id, "a proposal that changes the risk log or the tracker is never auto-approved; a person has to decide")
 
     held = _auto_hold_reason(proposal, policy, publisher, store)
     if held:
