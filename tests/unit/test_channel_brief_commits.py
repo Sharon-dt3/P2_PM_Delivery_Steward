@@ -12,7 +12,6 @@ import subprocess
 from datetime import date
 from pathlib import Path
 
-
 from pm.adapters.tracker import TrackerItem, TrackerMock
 from pm.channel.record import record_file
 from pm.channelbrief.commits import ENV_REPOS, commit_lines, repos_for
