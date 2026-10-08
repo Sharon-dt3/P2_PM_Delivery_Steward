@@ -173,8 +173,9 @@ def _plural(n: int, word: str) -> str:
     return f"{n} {word}{'' if n == 1 else 's'}"
 
 
-def render_weekly_report(facts: WeeklyFacts) -> str:
-    """The report as text: a fixed template over the facts. Nothing is worded by a model."""
+def render_weekly_report(facts: WeeklyFacts, narrative=None) -> str:
+    """The report as text. Every section and figure is a fixed template over the facts. The one part a model writes, the plain-language narrative
+    under Velocity (pm.reporting.weekly_narrative), is added only when a Narrative is given, and is already grounded when it gets here."""
     out = [f"Weekly status report, week ending {facts.week_ending} (a draft for a person to read; it is never sent).",
            "Every figure is computed from three stored project snapshots and can be recomputed from them; none is estimated.", ""]
 
@@ -226,4 +227,9 @@ def render_weekly_report(facts: WeeklyFacts) -> str:
     out.append(f"- Alongside it: {_plural(len(facts.added_this_week), 'item')} joined the sprint ({_items(facts.added_this_week)}) and "
                f"{len(facts.blocked)} {'is' if len(facts.blocked) == 1 else 'are'} blocked ({_items([b.item_id for b in facts.blocked])}). "
                "That is what changed in the same week; it does not say what caused the change.")
+    if narrative is not None and narrative.facts:
+        out += ["", "In plain language:"]
+        out += [f"- {narrative.text_for(fact)}" for fact in narrative.facts]
+        if narrative.closing:
+            out += ["", f"In short: {narrative.closing}"]
     return "\n".join(out)

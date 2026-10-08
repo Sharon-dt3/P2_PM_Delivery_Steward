@@ -140,7 +140,8 @@ def propose_morning_brief(
 
 
 def propose_weekly_report(
-    *, text: str, figures: list[dict], snapshots: dict[str, str], week_ending: str, db_path: str | Path = DEFAULT_DB_PATH,
+    *, text: str, figures: list[dict], snapshots: dict[str, str], week_ending: str, narrative: dict | None = None,
+    db_path: str | Path = DEFAULT_DB_PATH,
 ) -> tuple[Proposal, bool]:
     """The weekly status report as a proposal: the text, the figures it states and the stored snapshots they were computed from. One per week
     ending. It is never sent: the type has no executor, so the gate offers it for review and rejection only."""
@@ -152,7 +153,7 @@ def propose_weekly_report(
     proposal = store.create(
         type=WEEKLY_REPORT_PROPOSAL_TYPE,
         payload={"local_date": week_ending, "content": text, "figures": figures, "snapshots": snapshots, "target_channel": "(not sent)"},
-        original_model_output={"content": text, "figures": figures},
+        original_model_output={"content": text, "figures": figures, "narrative": narrative},  # what the model wrote and what grounding dropped, untouched
         source_refs=sorted(snapshots.values()),
         idempotency_key=key,
     )

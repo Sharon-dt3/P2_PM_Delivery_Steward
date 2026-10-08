@@ -3,6 +3,7 @@
 
   --at MOMENT    act as if it were this moment, in the project's timezone (default: now)
   --db PATH      the database to read and store snapshots in
+  --gateway      who writes the narrative: llm (the model set by the environment, default), scripted (no model: the facts in plainer order), none
   --dry-run      show the report and check it; store nothing and propose nothing (snapshots are built in memory only)
 
 Usage:
@@ -26,10 +27,23 @@ for _path in (_REPO_ROOT / "src", _P1_REPO_ROOT / "src", _REPO_ROOT / "packages"
 from pm.jobs.weekly_report_job import WEEK, run_weekly_report_job
 from pm.reporting.weekly import compute_weekly_facts, render_weekly_report
 from pm.reporting.weekly_check import check_report
+from pm.reporting.weekly_narrative import generate_narrative
 from pm.state.snapshot import build_current_snapshot
 from pm.storage.db import DEFAULT_DB_PATH
 
 TZ = "Asia/Colombo"
+
+
+def _gateway(kind: str):
+    if kind == "none":
+        return None
+    if kind == "scripted":
+        from pm.reporting.scripted_weekly import ScriptedWeeklyGateway
+
+        return ScriptedWeeklyGateway()
+    from spine.llm.gateway import LLMGateway
+
+    return LLMGateway()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -37,6 +51,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--at")
     parser.add_argument("--db", default=str(DEFAULT_DB_PATH))
     parser.add_argument("--tz", default=TZ)
+    parser.add_argument("--gateway", choices=["llm", "scripted", "none"], default="llm")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
     moment = datetime.now(timezone.utc)
@@ -44,12 +59,15 @@ def main(argv: list[str] | None = None) -> int:
         parsed = datetime.fromisoformat(args.at)
         moment = (parsed if parsed.tzinfo else parsed.replace(tzinfo=ZoneInfo(args.tz))).astimezone(timezone.utc)
 
+    gateway = _gateway(args.gateway)
     if args.dry_run:
         snaps = [build_current_snapshot(args.db, taken_at=(moment - n * WEEK).isoformat(), tz_name=args.tz) for n in (0, 1, 2)]
         facts = compute_weekly_facts(*snaps)
-        text, problems, note = render_weekly_report(facts), check_report(facts, render_weekly_report(facts), *snaps), "dry run: nothing stored, nothing proposed"
+        narrative = generate_narrative(facts, gateway) if gateway is not None else None
+        text = render_weekly_report(facts, narrative)
+        problems, note = check_report(facts, text, *snaps), "dry run: nothing stored, nothing proposed"
     else:
-        report = run_weekly_report_job(moment, db_path=args.db, timezone_name=args.tz)
+        report = run_weekly_report_job(moment, db_path=args.db, timezone_name=args.tz, gateway=gateway)
         text, problems = report.text, report.problems
         note = f"proposed {report.proposal_id}" if report.created else (f"already proposed {report.proposal_id}" if report.proposal_id else "not proposed")
     print(text)
@@ -61,4 +79,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    from dotenv import load_dotenv
+
+    load_dotenv()
     raise SystemExit(main())
