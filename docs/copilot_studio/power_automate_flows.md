@@ -40,6 +40,12 @@ Shape: **Recurrence** (Interval 5, Frequency Minute) -> **Claim new approvals** 
   never from the card). `Reason` is not mapped: the card does not collect one.
 - A risk-log proposal's card has a severity picker, Approve and Reject; a tracker batch's card has Approve (writes the items and comments to the tracker)
   and Reject; a channel brief's card has Approve (posts it) and Reject.
+- **The loop input must be an expression, not text.** Typing `@body(...)` into "Select an output from previous steps" saves it as the literal string
+  `@@body(...)`, and every run then fails with "foreach ... is of type 'String'". Click the field, open the **Expression** tab (the dynamic content
+  panel needs a wide window to show it), type `body('Claim_new_approvals')?['approvals']`, OK; the field then shows a purple `body(...)` token.
+- A claim marks cards as sent before the flow posts them, so a failed run loses them. Put them back with
+  `uv run python scripts/release_cards.py --db data/pm.db --reason "..." --all-pending` (writes `proposal.card_unsent`; the next claim sends them again).
+  Check the flow's run history after any change.
 - Do not save the flow before the API runs the version that has `/claim_new_approvals`: a saved scheduled flow starts at once and would call a missing
   endpoint every 5 minutes. Restart the API first, then save.
 - Not built: a follow-up "decision card" post (`GetDecisionCard`) after the decision.

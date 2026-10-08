@@ -150,3 +150,33 @@ def test_the_handler_matches_the_listing_shape(seeded_db_path):
     claimed = cards.handle_claim_new({}, db_path=seeded_db_path)["approvals"]
 
     assert [a["proposal_id"] for a in claimed] == [pid] and set(claimed[0]) == {"proposal_id", "type", "target_channel", "local_date", "created_at", "summary", "card"}
+
+
+def test_a_released_card_is_handed_out_again_once_and_the_audit_keeps_both_records(seeded_db_path):
+    from pm.approval.card_delivery import CARD_UNSENT, release_cards
+
+    pid = make(seeded_db_path, 1)
+    claim_new_approvals(db_path=seeded_db_path, now=NOW)
+
+    assert release_cards([pid], reason="flow run failed", db_path=seeded_db_path, now=NOW + timedelta(minutes=1)) == [pid]
+    again = claim_new_approvals(db_path=seeded_db_path, now=NOW + timedelta(minutes=5))
+    after = claim_new_approvals(db_path=seeded_db_path, now=NOW + timedelta(minutes=10))
+
+    assert ids(again) == [pid] and after == []
+    actions = [e["action"] for e in audit_trail(pid, db_path=seeded_db_path).events]
+    assert [a for a in actions if a.startswith("proposal.card_")] == [CARD_SENT, CARD_UNSENT, CARD_SENT]
+
+
+def test_release_leaves_decided_unknown_and_never_sent_proposals_alone(seeded_db_path):
+    from pm.approval.card_delivery import CARD_UNSENT, release_cards
+
+    decided, unsent = make(seeded_db_path, 1), make(seeded_db_path, 2)
+    claim_new_approvals(db_path=seeded_db_path, now=NOW)
+    service.reject(decided, approver_id="sharon", policy=APPROVERS, db_path=seeded_db_path)
+    fresh = make(seeded_db_path, 3)  # no card sent yet
+
+    released = release_cards([decided, "nope", fresh, unsent, unsent], reason="x", db_path=seeded_db_path)
+
+    assert released == [unsent]
+    for pid in (decided, fresh):
+        assert CARD_UNSENT not in [e["action"] for e in audit_trail(pid, db_path=seeded_db_path).events]
