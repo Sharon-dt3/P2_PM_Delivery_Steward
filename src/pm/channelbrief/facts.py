@@ -103,6 +103,7 @@ class ChannelBriefFacts:
     promises: tuple[Promise, ...]
     work: tuple[Work, ...]
     sources: dict = field(default_factory=dict)  # what was read, for the audit
+    unassigned: tuple[Work, ...] = ()  # this channel's own tracker items that nobody owns yet and are not done: a standing list, not only today's
 
     def lines(self) -> list[Line]:
         return [line for name in SECTIONS for line in self.sections[name]]
@@ -137,6 +138,7 @@ class P1Directory:
         self._names: dict[str, str] = {}
         self._messages: dict[str, tuple[str | None, str]] = {}
         self._links: dict[str, str] = {}
+        self._channels: dict[str, str] = {}
         self.available = False
         try:
             conn = sqlite3.connect(f"file:{self._path}?mode=ro", uri=True)
@@ -151,6 +153,10 @@ class P1Directory:
                 self._links = {m: link for m, link in conn.execute("SELECT id, permalink FROM messages") if link}
             except sqlite3.Error:
                 self._links = {}
+            try:  # a store without the column: no channel is known for any message, so nothing is claimed for a channel, and everything else works
+                self._channels = {m: c for m, c in conn.execute("SELECT id, channel_id FROM messages") if c}
+            except sqlite3.Error:
+                self._channels = {}
             self.available = True
         except sqlite3.Error:
             self.available = False
@@ -170,6 +176,10 @@ class P1Directory:
 
     def link_to(self, message_id: str) -> str | None:
         return self._links.get(message_id)
+
+    def channel_of(self, message_id: str) -> str | None:
+        """The channel P1 stored this message in, or None when P1's store does not have it (never guessed from anything else)."""
+        return self._channels.get(message_id)
 
     def posted_on(self, message_id: str) -> str | None:
         _, posted_at = self._messages.get(message_id, (None, ""))
@@ -191,6 +201,19 @@ def _work_from(message_ids: set[str], db_path) -> tuple[Work, ...]:
         if cited:
             work.append(Work("risk", risk.id, risk.severity, risk.title, cited))
     return tuple(work)
+
+
+def _unassigned_from(channel_id: str, directory: P1Directory, db_path) -> tuple[Work, ...]:
+    """Tracker items created from THIS channel's messages that have no assignee and are not done. An item is this channel's only when P1's own
+    store says its source message was posted here, so the seeded sample project's unassigned items (whose messages P1 never saw here) can never
+    reach a real channel, and with P1's store unreadable nothing is listed rather than guessed."""
+    found = [
+        Work("tracker", item.id, item.status, item.title, item.source_message_id)
+        for item in TrackerMock(db_path=db_path).list_items()
+        if item.assignee_id is None and item.status != "done" and item.source_message_id
+        and directory.channel_of(item.source_message_id) == channel_id
+    ]
+    return tuple(sorted(found, key=lambda w: w.ref))
 
 
 # --- the facts ---------------------------------------------------------------------------------------------------------------
@@ -277,5 +300,6 @@ def compute_channel_brief_facts(
         channel_id=channel_id, channel_name=channel_name, kind=kind, local_date=local_date.isoformat(), record_date=record.date,
         record_age_days=(local_date - date.fromisoformat(record.date)).days, sections=sections, silent=silent,
         promises=_promises(recent, directory, local_date), work=_work_from(message_ids, db_path),
+        unassigned=_unassigned_from(channel_id, directory, db_path),
         sources={"record": str(path), "authors_from_p1_store": directory.available, "records_read_for_promises": [d.isoformat() for d, _ in recent]},
     )

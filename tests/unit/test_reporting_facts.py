@@ -162,3 +162,20 @@ def test_a_person_with_only_a_commit_still_counts_as_having_activity(seeded_db_p
     wei = next(person for person in facts.people if person.assignee_id == "wei.chen")
     assert wei.commit_count > 0
     assert wei.has_activity is True
+
+
+def test_open_items_nobody_owns_are_a_fact_of_their_own_because_no_person_section_holds_them(seeded_db_path):
+    facts = compute_morning_brief_facts(_snapshot(seeded_db_path))
+
+    unowned = [(u.item_id, u.status) for u in facts.unassigned]
+
+    assert unowned == [("PM-018", "in_review")]  # the seed's one unassigned item, and the only one
+    assert all(u.item_id not in {i.item_id for p in facts.people for i in p.delivered + p.pending + p.blocked} for u in facts.unassigned)
+
+
+def test_a_finished_item_with_no_owner_is_not_listed(seeded_db_path):
+    TrackerMock(db_path=seeded_db_path).transition("PM-018", "done")
+
+    later = _snapshot(seeded_db_path, taken_at="2099-01-01T00:00:00+00:00")  # after the transition, which is stamped now
+
+    assert compute_morning_brief_facts(later).unassigned == []

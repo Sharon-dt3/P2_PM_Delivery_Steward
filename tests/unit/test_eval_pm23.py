@@ -398,3 +398,21 @@ def test_the_script_exits_one_when_the_facts_diverge(script, capsys, monkeypatch
     code = script.main([])
 
     assert code == 1 and "FAIL" in capsys.readouterr().out
+
+
+def test_an_unassigned_item_is_a_checked_fact_a_brief_that_drops_or_misstates_it_is_caught():
+    from pm.eval.pm23_cases import facts_from_structure, facts_from_text
+    from pm.reporting.facts import MorningBriefFacts, UnassignedFact
+
+    facts = MorningBriefFacts(as_of="2026-09-18T12:00:00+00:00", people=[], blockers=[],
+                              unassigned=[UnassignedFact(item_id="PM-018", title="Caching layer PR review", status="in_review")])
+    shown = "Sprint scope: no sprint on file covers this date.\n\n## Nobody is assigned\n- PM-018 (Caching layer PR review): nobody is assigned; status in_review.\n\n## Blockers\n- none."
+    dropped = shown.replace("## Nobody is assigned\n- PM-018 (Caching layer PR review): nobody is assigned; status in_review.\n\n", "")
+    misstated = shown.replace("status in_review", "status done")
+
+    expected = facts_from_structure(facts)
+
+    assert ("unassigned", "PM-018", "in_review") in expected
+    assert facts_from_text(shown) == expected  # said exactly as the structure has it
+    assert facts_from_text(dropped) != expected and facts_from_text(misstated) != expected
+    assert not any(f[0] == "owner" and f[1] == "Nobody is assigned" for f in facts_from_text(shown))  # never mistaken for a person

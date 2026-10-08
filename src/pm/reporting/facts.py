@@ -73,6 +73,12 @@ class ItemFact(BaseModel):
     title: str
 
 
+class UnassignedFact(BaseModel):
+    item_id: str
+    title: str
+    status: str
+
+
 class PersonFacts(BaseModel):
     assignee_id: str
     display_name: str | None = None  # from the tracker's roster; None when it has none for this id
@@ -125,6 +131,7 @@ class MorningBriefFacts(BaseModel):
     sprint: SprintScopeFacts | None = None  # None if taken_at's date falls outside every known sprint
     people: list[PersonFacts]
     blockers: list[BlockerFact]
+    unassigned: list[UnassignedFact] = []  # open items nobody owns: they belong to no person's section, so they would otherwise appear nowhere
     automated_commit_count: int = 0  # commits by ignored automated accounts (bots): not anyone's activity, but not hidden
 
 
@@ -271,5 +278,10 @@ def compute_morning_brief_facts(snapshot: ProjectSnapshot) -> MorningBriefFacts:
         sprint=_resolve_sprint_scope(snapshot, as_of_date),
         people=_compute_person_facts(snapshot, commit_counts, names),
         blockers=_compute_blocker_facts(snapshot, names),
+        unassigned=sorted(
+            (UnassignedFact(item_id=i.id, title=i.title, status=i.status) for i in snapshot.items
+             if i.assignee_id is None and i.status != "done"),
+            key=lambda fact: fact.item_id,
+        ),
         automated_commit_count=automated,
     )

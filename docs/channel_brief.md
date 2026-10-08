@@ -38,6 +38,17 @@ A channel brief is a proposal like any other (the same morning-brief and end-of-
 post): one per channel per day per kind, **nothing sent until a person approves it**, posted only to a channel on P1's allowlist. The payload
 says it came from a channel record and which one, and the proposal keeps every line with the message behind it.
 
+## Who owns what: "Nobody owns these yet"
+
+Everything the agent creates from a channel message is blocked and has nobody assigned, so without a call-out those items sit in the tracker
+unseen. The brief ends with a standing list: this channel's tracker items that have **no assignee and are not done**, whatever day they were
+created, one line each (`PM-031 (blocked): <title> (from message <id>)`), cut to `PM_CHANNEL_BRIEF_LINES` with a count of the rest. Assign an item in
+the tracker and it drops off the next brief.
+
+An item is "this channel's" only when P1's message store says its source message was posted in this channel. Items from another channel, the
+seeded sample project (PM-018 and the rest) and anything P1 never saw are never listed, and with P1's store unreadable the section is left out
+rather than guessed. The sample-project morning brief has the same idea as a section, "Nobody is assigned", worded by code and never by the model.
+
 ## Automatic end to end
 
 Nothing in a normal day is run by hand:

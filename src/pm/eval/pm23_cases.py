@@ -84,6 +84,12 @@ def facts_from_text(content: str) -> set[Fact]:
         if title == "Blockers":
             facts |= _blocker_facts(lines)
             continue
+        if title == "Nobody is assigned":
+            for line in lines:
+                found = re.match(r"(PM-\d+) \(.*\): nobody is assigned; status (\S+)\.$", line)
+                if found:
+                    facts.add(("unassigned", found.group(1), found.group(2)))
+            continue
         facts.add(("owner", title))
         for line in lines:
             if line.startswith("No update:"):
@@ -127,6 +133,7 @@ def facts_from_structure(facts: MorningBriefFacts) -> set[Fact]:
     else:
         out |= {("sprint", "id", sprint.sprint_id), ("sprint", "day", sprint.day_number, sprint.total_days),
                 ("sprint", "done", sprint.done_items, sprint.total_items)}
+    out |= {("unassigned", u.item_id, u.status) for u in facts.unassigned}
     for person in facts.people:
         out.add(("owner", person.name))
         if not person.has_activity:

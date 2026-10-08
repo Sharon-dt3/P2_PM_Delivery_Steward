@@ -448,3 +448,25 @@ def test_rendered_content_is_identical_for_identical_facts_and_lines():
 
     assert render() == render()
     assert "- Delivered: Aisha delivered the login page. Aisha fixed the typo." in render()
+
+
+
+_NO_LINES = {key: [] for key in ("sprint_scope", "committed", "delivered", "pending", "blocked", "blockers")}
+
+
+def test_the_brief_says_which_open_items_nobody_is_assigned_to_in_a_section_no_model_words():
+    from pm.reporting.facts import UnassignedFact
+    from pm.reporting.morning_brief import _render_brief
+
+    facts = _facts().model_copy(update={"unassigned": [UnassignedFact(item_id="PM-018", title="Caching layer PR review", status="in_review")]})
+
+    text = _render_brief(facts, _NO_LINES)
+
+    assert "## Nobody is assigned\n- PM-018 (Caching layer PR review): nobody is assigned; status in_review." in text
+    assert text.index("## Nobody is assigned") < text.index("## Blockers")  # after the people, before the risks
+
+
+def test_the_section_is_left_out_when_everything_has_an_owner_so_an_ordinary_brief_is_unchanged():
+    from pm.reporting.morning_brief import _render_brief
+
+    assert "Nobody is assigned" not in _render_brief(_facts(), _NO_LINES)

@@ -80,6 +80,13 @@ def render_content(facts: ChannelBriefFacts) -> str:
         if len(facts.work) > limit:
             out.append(f"- and {len(facts.work) - limit} more")
 
+    if facts.unassigned:
+        out += ["", f"## Nobody owns these yet ({len(facts.unassigned)})"]
+        for w in facts.unassigned[:limit]:
+            out.append(f"- {w.ref} ({w.label}): {w.title} (from message {w.message_id})")
+        if len(facts.unassigned) > limit:
+            out.append(f"- and {len(facts.unassigned) - limit} more")
+
     if facts.silent:
         out += ["", "## No say that day"]
         out += [f"- {who}: {what.lower()}" for who, what in facts.silent]
@@ -97,4 +104,5 @@ def evidence_lines(facts: ChannelBriefFacts) -> list[dict]:
     lines = [{"section": line.section, "reference_id": line.message_id, "text": line.text, "quote": line.quote} for line in facts.lines()]
     lines += [{"section": "promise", "reference_id": p.line.message_id, "text": p.line.text, "quote": p.line.quote} for p in facts.promises]
     lines += [{"section": f"work:{w.kind}", "reference_id": w.message_id, "text": f"{w.ref}: {w.title}", "quote": None} for w in facts.work]
+    lines += [{"section": "unassigned:tracker", "reference_id": w.message_id, "text": f"{w.ref}: {w.title}", "quote": None} for w in facts.unassigned]
     return lines

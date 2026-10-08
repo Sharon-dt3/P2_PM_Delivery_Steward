@@ -743,3 +743,95 @@ def test_the_command_line_makes_the_brief_and_leaves_a_proposal(seeded_db_path, 
     out = capsys.readouterr().out
     assert "A real blocker." in out and "proposal:" in out and "batches from the same record:" in out
     assert [p.type for p in ProposalStore(seeded_db_path).list_by_status(PENDING)].count("morning_brief_publish") == 1
+
+
+# --- who owns what: the standing list of this channel's items nobody owns -----------------------------------------------------------------
+
+
+def _p1_store_with_channels(tmp_path, channels: dict[str, str]) -> P1Directory:
+    """P1's store as a stand-in that also records which channel each message was posted in."""
+    path = tmp_path / "p1_channels.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        "CREATE TABLE members (id TEXT PRIMARY KEY, display_name TEXT);"
+        "CREATE TABLE messages (id TEXT PRIMARY KEY, author_id TEXT, posted_at TEXT, permalink TEXT, channel_id TEXT);"
+    )
+    conn.execute("INSERT INTO members VALUES (?, ?)", (SHARON, "Sharon Silva"))
+    conn.executemany("INSERT INTO messages VALUES (?, ?, ?, ?, ?)", [(m, SHARON, "2026-10-07T04:00:00.000Z", None, c) for m, c in channels.items()])
+    conn.commit()
+    conn.close()
+    return P1Directory(path)
+
+
+def _item(db, id_, message_id, *, status="blocked", assignee=None, title=None):
+    TrackerMock(db_path=db).create_item(TrackerItem(id=id_, title=title or f"Item {id_}", status=status, sprint_id="sprint-13",
+                                                    created_at="2026-10-07", source_message_id=message_id, assignee_id=assignee))
+
+
+def test_items_made_from_this_channels_messages_that_nobody_owns_are_listed(seeded_db_path, outcomes, tmp_path):
+    outcomes("2026-10-07", updates=[evidence("m1", "An update.")])
+    directory = _p1_store_with_channels(tmp_path, {"m1": CHANNEL, "m9": CHANNEL})
+    _item(seeded_db_path, "PM-031", "m9", title="The staging key was rotated")  # said on an earlier day, still nobody's
+
+    content = render_content(facts_for(MORNING, seeded_db_path, outcomes, directory))
+
+    assert "## Nobody owns these yet (1)\n- PM-031 (blocked): The staging key was rotated (from message m9)" in content
+
+
+def test_an_item_someone_owns_or_that_is_done_is_not_listed(seeded_db_path, outcomes, tmp_path):
+    outcomes("2026-10-07", updates=[evidence("m1", "An update.")])
+    directory = _p1_store_with_channels(tmp_path, {"m1": CHANNEL, "m2": CHANNEL, "m3": CHANNEL, "m4": CHANNEL})
+    _item(seeded_db_path, "PM-031", "m1", assignee="olivia.dupont")  # has an owner now
+    _item(seeded_db_path, "PM-032", "m2", status="done")  # finished
+    _item(seeded_db_path, "PM-033", "m3")  # still nobody's
+
+    facts = facts_for(MORNING, seeded_db_path, outcomes, directory)
+
+    assert [w.ref for w in facts.unassigned] == ["PM-033"]
+
+
+def test_an_item_from_another_channel_or_the_sample_project_is_never_listed(seeded_db_path, outcomes, tmp_path):
+    outcomes("2026-10-07", updates=[evidence("m1", "An update.")])
+    directory = _p1_store_with_channels(tmp_path, {"m1": CHANNEL, "m7": "19:another-channel@thread.tacv2"})
+    _item(seeded_db_path, "PM-031", "m7")  # made from a different channel's message
+    _item(seeded_db_path, "PM-032", "not-in-p1-at-all")  # P1 never saw this message: not this channel's, so not claimed
+    # the seeded sample project has its own unassigned item (PM-018) and no message at all
+
+    facts = facts_for(MORNING, seeded_db_path, outcomes, directory)
+    message = render_message(facts)
+
+    assert facts.unassigned == () and "Nobody owns" not in message and "PM-018" not in message
+
+
+def test_with_no_p1_store_or_a_store_without_channels_nothing_is_claimed_and_authors_still_work(seeded_db_path, outcomes, p1, tmp_path):
+    outcomes("2026-10-07", updates=[evidence("m1", "An update.")])
+    _item(seeded_db_path, "PM-031", "m1")
+
+    old_store = facts_for(MORNING, seeded_db_path, outcomes, p1)  # the shared fixture's store has no channel column
+    absent = facts_for(MORNING, seeded_db_path, outcomes, P1Directory(tmp_path / "missing.db"))
+
+    assert old_store.unassigned == () and absent.unassigned == ()
+    assert old_store.sections["updates"][0].author == "Sharon Silva"  # a store without the column loses nothing else
+    assert p1.available and old_store.sources["authors_from_p1_store"] is True  # and is still reported as readable, not as missing
+
+
+def test_the_standing_list_is_numbered_cut_to_the_limit_and_in_the_evidence(seeded_db_path, outcomes, tmp_path, monkeypatch):
+    monkeypatch.setenv("PM_CHANNEL_BRIEF_LINES", "2")
+    outcomes("2026-10-07", updates=[evidence("m1", "An update.")])
+    directory = _p1_store_with_channels(tmp_path, {f"m{i}": CHANNEL for i in range(1, 5)})
+    for n, m in ((31, "m1"), (32, "m2"), (33, "m3")):
+        _item(seeded_db_path, f"PM-0{n}", m)
+
+    facts = facts_for(MORNING, seeded_db_path, outcomes, directory)
+    content = render_content(facts)
+
+    assert "## Nobody owns these yet (3)" in content and "- and 1 more" in content.split("## Nobody owns")[1]
+    assert [line["reference_id"] for line in evidence_lines(facts) if line["section"] == "unassigned:tracker"] == ["m1", "m2", "m3"]
+
+
+def test_the_evening_summary_lists_them_too(seeded_db_path, outcomes, tmp_path):
+    outcomes("2026-10-08", updates=[evidence("m1", "An update.")])
+    directory = _p1_store_with_channels(tmp_path, {"m1": CHANNEL})
+    _item(seeded_db_path, "PM-031", "m1")
+
+    assert "PM-031 (blocked)" in render_content(facts_for(EVENING, seeded_db_path, outcomes, directory))

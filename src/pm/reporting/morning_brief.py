@@ -507,6 +507,12 @@ def _render_brief(facts: MorningBriefFacts, sections: dict[str, list[FactualLine
             parts.append(f"- {label}: " + " ".join(lines) if lines else f"- {label}: none.")
         parts.append("")
 
+    if facts.unassigned:
+        # Computed in code, never worded by a model: each line is the recorded fact, and cites the item it is about.
+        parts.append("## Nobody is assigned")
+        parts += [f"- {u.item_id} ({u.title}): nobody is assigned; status {u.status}." for u in facts.unassigned]
+        parts.append("")
+
     parts.append("## Blockers")
     blocker_lines = sorted(sections["blockers"], key=_order_key("blockers", facts))
     grounded_refs = {line.message_id for line in blocker_lines}
