@@ -39,8 +39,19 @@ def _source(line: Line) -> str:
     return f"[source]({line.url})" if line.url else f"message {line.message_id}"
 
 
-def _line(line: Line) -> str:
-    return f"- {line.text} ({_who(line)}{_source(line)})"
+def _by_message(lines) -> list[list[Line]]:
+    """P1 may record one message as several lines (it splits a long message into the points it makes). They are one person saying one thing in
+    one place, so they are shown as one bullet, in the order P1 recorded them, in the order the messages first appear."""
+    groups: dict[str, list[Line]] = {}
+    for line in lines:
+        groups.setdefault(line.message_id, []).append(line)
+    return list(groups.values())
+
+
+def _line(group: list[Line]) -> str:
+    """One bullet for one message: every line of it exactly as P1 recorded it, joined with a space, then who said it and where."""
+    first = group[0]
+    return f"- {' '.join(line.text for line in group)} ({_who(first)}{_source(first)})"
 
 
 def _days(n: int) -> str:
@@ -56,7 +67,7 @@ def render_content(facts: ChannelBriefFacts) -> str:
     out.append("Every line below is quoted from that record or computed from it; none of it is generated.")
 
     for name in ("blockers", "decisions", "updates", "questions"):
-        lines = facts.sections[name]
+        lines = _by_message(facts.sections[name])
         out += ["", f"## {TITLES[name]} ({len(lines)})"]
         if not lines:
             out.append("- none recorded")

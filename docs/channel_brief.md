@@ -38,6 +38,14 @@ A channel brief is a proposal like any other (the same morning-brief and end-of-
 post): one per channel per day per kind, **nothing sent until a person approves it**, posted only to a channel on P1's allowlist. The payload
 says it came from a channel record and which one, and the proposal keeps every line with the message behind it.
 
+## One message, one bullet
+
+P1 can record one message as several lines (it splits a long message into the points it makes). A reader should not see one person's one message as
+three separate blockers, so lines with the same source message are shown as **one bullet** within their section: every sentence exactly as P1
+recorded it, in its order, joined with a space, followed by who said it and one source link. Bullets are in the order their messages first appear.
+The heading and the `PM_CHANNEL_BRIEF_LINES` limit count bullets (messages), not sentences. The proposal's evidence still keeps every line
+separately, so nothing about what P1 recorded is merged away. The tracker and risk batches already worked this way (one item per message).
+
 ## Who owns what: "Nobody owns these yet"
 
 Everything the agent creates from a channel message is blocked and has nobody assigned, so without a call-out those items sit in the tracker

@@ -353,7 +353,7 @@ def test_an_empty_channel_gets_an_honest_empty_brief(seeded_db_path, outcomes, p
 
 
 def test_a_long_section_is_cut_and_says_how_many_more_there_are(seeded_db_path, outcomes, p1):
-    outcomes("2026-10-07", updates=[evidence("m1", f"Update number {n}.") for n in range(1, 9)])
+    outcomes("2026-10-07", updates=[evidence(f"u{n}", f"Update number {n}.") for n in range(1, 9)])
 
     content = render_content(facts_for(MORNING, seeded_db_path, outcomes, p1))
 
@@ -363,7 +363,7 @@ def test_a_long_section_is_cut_and_says_how_many_more_there_are(seeded_db_path, 
 
 def test_the_line_limit_is_a_setting(seeded_db_path, outcomes, p1, monkeypatch):
     monkeypatch.setenv("PM_CHANNEL_BRIEF_LINES", "2")
-    outcomes("2026-10-07", updates=[evidence("m1", f"Update number {n}.") for n in range(1, 5)])
+    outcomes("2026-10-07", updates=[evidence(f"u{n}", f"Update number {n}.") for n in range(1, 5)])
 
     assert render_content(facts_for(MORNING, seeded_db_path, outcomes, p1)).count("Update number") == 2
 
@@ -835,3 +835,59 @@ def test_the_evening_summary_lists_them_too(seeded_db_path, outcomes, tmp_path):
     _item(seeded_db_path, "PM-031", "m1")
 
     assert "PM-031 (blocked)" in render_content(facts_for(EVENING, seeded_db_path, outcomes, directory))
+
+
+# --- one message, one bullet ---------------------------------------------------------------------------------------------------------------
+
+
+def test_the_lines_p1_recorded_for_one_message_are_one_bullet_with_one_source(seeded_db_path, outcomes, p1):
+    outcomes("2026-10-07", blockers=[
+        evidence("m1", "The environment is out of credits."), evidence("m1", "A request for more capacity has no reply."),
+        evidence("m1", "The demo of the conversational part is at risk."), evidence("m2", "The staging key was rotated."),
+    ])
+
+    content = render_content(facts_for(MORNING, seeded_db_path, outcomes, p1))
+
+    assert content.count("\n- ") >= 2 and "## Blockers (2)" in content  # two messages, so two bullets and a heading that says two
+    assert ("- The environment is out of credits. A request for more capacity has no reply. The demo of the conversational part is at risk. "
+            "(Sharon Silva, message m1)") in content
+    assert "- The staging key was rotated. (Sharon Silva, message m2)" in content
+    assert content.count("message m1") == 1  # said once, not once per sentence
+
+
+def test_a_grouped_message_keeps_every_sentence_exactly_and_in_the_order_p1_recorded_them(seeded_db_path, outcomes, p1):
+    parts = ["Third, but recorded first.", "First?", "A (b), c; d: e - f."]
+    outcomes("2026-10-07", updates=[evidence("m1", t) for t in parts])
+
+    content = render_content(facts_for(MORNING, seeded_db_path, outcomes, p1))
+
+    assert f"- {' '.join(parts)} (Sharon Silva, message m1)" in content
+
+
+def test_lines_from_different_messages_stay_separate_even_when_they_alternate(seeded_db_path, outcomes, p1):
+    outcomes("2026-10-07", updates=[evidence("m1", "One a."), evidence("m2", "Two a."), evidence("m1", "One b."), evidence("m2", "Two b.")])
+
+    content = render_content(facts_for(MORNING, seeded_db_path, outcomes, p1))
+
+    assert "- One a. One b. (Sharon Silva, message m1)" in content and "- Two a. Two b. (Sharon Silva, message m2)" in content
+    assert content.index("One a.") < content.index("Two a.")  # the message that appeared first stays first
+
+
+def test_the_limit_counts_messages_not_sentences(seeded_db_path, outcomes, p1, monkeypatch):
+    monkeypatch.setenv("PM_CHANNEL_BRIEF_LINES", "2")
+    outcomes("2026-10-07", updates=[evidence("m1", f"Sentence {n}.") for n in range(1, 5)] + [evidence("m2", "Other."), evidence("m3", "Third.")])
+
+    content = render_content(facts_for(MORNING, seeded_db_path, outcomes, p1))
+
+    assert "## Updates (3)" in content and "Sentence 4." in content and "Other." in content and "Third." not in content
+    assert "- and 1 more in the record (3 in all)" in content
+
+
+def test_the_same_message_in_two_sections_is_one_bullet_in_each_and_the_evidence_still_has_every_line(seeded_db_path, outcomes, p1):
+    outcomes("2026-10-07", blockers=[evidence("m1", "A blocker."), evidence("m1", "Its second sentence.")], updates=[evidence("m1", "An update.")])
+
+    facts = facts_for(MORNING, seeded_db_path, outcomes, p1)
+    content = render_content(facts)
+
+    assert "- A blocker. Its second sentence. (Sharon Silva, message m1)" in content and "- An update. (Sharon Silva, message m1)" in content
+    assert [line["text"] for line in evidence_lines(facts) if line["section"] == "blocker"] == ["A blocker.", "Its second sentence."]  # nothing merged in the record of what was proposed
