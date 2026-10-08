@@ -10,8 +10,8 @@ The rules are plain Python, no model (the record's lines are already grounded by
   neither         a line naming an item the tracker does not have, or an update/decision/question naming none: skipped, with the reason
 
 Consuming a record writes nothing to the tracker or the risk log: the two batches are proposals, approved by a person like every other.
-Approving the risk batch writes its entries to the risk log (tests/unit/test_risk_approval.py); approving the tracker batch is refused:
-applying tracker changes is not built.
+Approving the risk batch writes its entries to the risk log (tests/unit/test_risk_approval.py); approving the tracker batch writes the
+items and comments to the tracker (tests/unit/test_tracker_approval.py).
 """
 
 from __future__ import annotations
@@ -213,17 +213,18 @@ def test_consuming_a_record_proposes_two_batches_and_writes_nothing_else(world):
     assert {k: after[k] - before[k] for k in after} == {"items": 0, "comments": 0, "risks": 0, "proposals": 2, "commitments": 0}
 
 
-def test_approving_the_tracker_batch_is_refused_and_writes_nothing(world):
+def test_approving_the_tracker_batch_writes_to_the_tracker_and_nowhere_else(world):
     result = world.consume()
-
-    assert CHANNEL_TRACKER_PROPOSAL_TYPE not in service.EXECUTABLE_TYPES
+    assert CHANNEL_TRACKER_PROPOSAL_TYPE in service.EXECUTABLE_TYPES and CHANNEL_TRACKER_PROPOSAL_TYPE not in service.MESSAGE_TYPES
     policy = service.ApprovalPolicy(approver_ids=frozenset({"sharon.silva"}))
     before = _counts(world.db)
+
     approved = service.approve_and_send(result.tracker.proposal_id, approver_id="sharon.silva", publisher=None, policy=policy, db_path=world.db)
 
-    assert approved.outcome == service.REFUSED and "not built" in approved.detail  # nothing is sent or written
-    assert ProposalStore(world.db).get(result.tracker.proposal_id).status == PENDING
-    assert _counts(world.db) == before
+    after = _counts(world.db)
+    assert approved.outcome == service.APPLIED_OUTCOME and ProposalStore(world.db).get(result.tracker.proposal_id).status == "applied"
+    # one new item (the blocker that names none), and its four comments plus the note saying where the item came from; the risk log is untouched
+    assert {k: after[k] - before[k] for k in after} == {"items": 1, "comments": 5, "risks": 0, "proposals": 0, "commitments": 0}
 
 
 def test_approving_the_risk_batch_is_the_one_step_that_writes_to_the_risk_log(world):

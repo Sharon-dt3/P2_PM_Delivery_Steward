@@ -48,7 +48,7 @@ proposed again): the next RISK id, the tracker item's title, the proposal's desc
 dated as of the evidence, with the suggested owner (the tracker's assignee, as "Name (id)") when there is one. The proposal carries no severity, so the approver picks one (`--severity` on the command line, a picker on the
 dashboard and the card); if nobody does, `medium` is written and the audit records it as a default. Approving is refused up front (and
 the proposal stays pending) for a stranger, for an edited approval, and for a blocker that already has an open risk. Auto-approve never
-takes one. With `PM_RISK_LOG_SYNC=1` the entry is pushed to the lead's table at once and the approval says whether it got there (`risk_log/README.md`). The rules are enforced in the service, not hidden in the UI: `pm/approval/risk_apply.py`, `tests/unit/test_risk_approval.py`.
+takes one (a tracker batch from a channel record is the same kind of decision: see `docs/channel_outcome_record.md`). With `PM_RISK_LOG_SYNC=1` the entry is pushed to the lead's table at once and the approval says whether it got there (`risk_log/README.md`). The rules are enforced in the service, not hidden in the UI: `pm/approval/risk_apply.py`, `tests/unit/test_risk_approval.py`.
 
 ## Rejection memory (PM-17)
 

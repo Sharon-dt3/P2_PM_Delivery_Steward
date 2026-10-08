@@ -4,8 +4,8 @@
 A fresh copy of the frozen seed with proposals waiting for a decision, so approving in Teams never touches data/pm.db:
   - a morning brief (Approve / Reject)
   - the two batches made from P1's newest outcome record, if there is one (the risk batch: severity, Approve, Reject; the tracker
-    batch: Reject only, applying tracker changes is not built). Approving the risk batch writes to the risk log, so run the API with
-    PM_RISK_LOG_CSV pointed at a COPY of risk_log/risks.csv when trying it
+    batch: Approve, Reject). Approving the risk batch writes to the risk log and approving the tracker batch writes to the tracker, so
+    try them against this throwaway database, with PM_RISK_LOG_CSV pointed at a COPY of risk_log/risks.csv
 Rebuilding replaces the file. Nothing is sent anywhere.
 
 Usage:

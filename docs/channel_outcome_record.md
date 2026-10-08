@@ -54,12 +54,19 @@ A refused record gives zero proposals and one row in the audit log (`record.refu
 `not_allowlisted`: the scope/consent flag is anything other than the JSON value `true`, so P1 was not cleared to pass the channel's
 content on and nothing is taken from it. This is PM-27's rule, applied at the door.
 
-## What it does not do
+## What it does, and what only a person's approval does
 
 Consuming a record writes nothing to the tracker or the risk log: both batches are proposals. Approving the **risk-log batch** writes its
 entries to the risk log (`pm.approval.risk_apply`: the next RISK id, each entry carrying the channel message that justifies it, severity chosen
 by the approver or `medium` recorded as a default, a blocker that already has an open risk skipped and the skip recorded). Approving the
-**tracker batch** is refused: applying tracker changes is not built, so it can only be rejected.
+**tracker batch** writes it to the tracker (`pm.approval.tracker_apply`): a comment on each item a channel line names, and a new item for a blocker
+that names none (status blocked, **no assignee**, the sprint that covers the day, dated and traced to the channel message), everything tagged
+`ai-created` so an entry the agent made is never mistaken for a person's, and a first comment on a new item saying where it came from. It is
+idempotent: re-approving, a retry, a line already in the tracker or a reworded line about a message already turned into an item never writes
+twice; what cannot be written (an item the tracker no longer has, a day no sprint covers) is skipped and recorded in the audit. A new item needs a
+sprint: the one that covers the day, or, when none does, the sprint the operator names in `PM_TRACKER_DEFAULT_SPRINT` (never one the agent
+picks; unset, those items are skipped and the approval says how to fix it). A batch is
+approved whole or rejected; it cannot be edited.
 
 ## How the claim "no shared code" is checked
 

@@ -148,6 +148,11 @@ class Tracker(ABC):
         """Raises ItemNotFoundError if item_id doesn't exist."""
 
     @abstractmethod
+    def list_comments(self, item_id: str) -> list[ItemComment]:
+        """Every comment on item_id, oldest first (empty for an item with none): what a writer needs to know a comment is already there
+        before it adds it again. Raises ItemNotFoundError if item_id doesn't exist."""
+
+    @abstractmethod
     def create_item(self, payload: TrackerItem) -> TrackerItem:
         """Raises DuplicateItemError if payload.id already exists."""
 
@@ -284,6 +289,14 @@ class TrackerMock(Tracker):
             conn.commit()
             comment_id = cursor.lastrowid
         return ItemComment(id=comment_id, item_id=item_id, author_id=None, body=body, tags=tags, created_at=created_at)
+
+    def list_comments(self, item_id: str) -> list[ItemComment]:
+        with self._conn() as conn:
+            if conn.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone() is None:
+                raise ItemNotFoundError(item_id)
+            rows = conn.execute("SELECT * FROM item_comments WHERE item_id = ? ORDER BY id", (item_id,)).fetchall()
+        return [ItemComment(id=r["id"], item_id=r["item_id"], author_id=r["author_id"], body=r["body"], tags=json.loads(r["tags"]),
+                            created_at=r["created_at"]) for r in rows]
 
     def create_item(self, payload: TrackerItem) -> TrackerItem:
         with self._conn() as conn:

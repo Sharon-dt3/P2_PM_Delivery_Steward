@@ -9,7 +9,7 @@ functions as the command line -- enforcement stays in pm.approval.service.
 
 Three kinds of card: a message (a brief, a summary, a reminder: edit box, Approve, Reject), a risk-log
 proposal (a severity picker, Approve, Reject: approving writes it to the risk log) and a tracker batch
-(Reject only: applying one is not built). See docs/copilot_studio/ for the contract.
+(Approve, Reject: approving creates the items and adds the comments in the tracker). See docs/copilot_studio/ for the contract.
 """
 
 from __future__ import annotations
@@ -116,9 +116,31 @@ def pending_risk_card(pending: PendingApproval) -> dict:
     )
 
 
+def pending_tracker_card(pending: PendingApproval) -> dict:
+    """The card for a batch of tracker changes: the whole list, each item with the channel message it came from and its full line (the
+    title is clipped), then Approve (creates the items and adds the comments in the tracker) and Reject. No edit box, no severity."""
+    return _card(
+        [
+            _text(pending.summary, size="Large", weight="Bolder"),
+            _text(pending.content, fontType="Monospace"),
+            _text("Approving writes these to the tracker: new items are blocked and have nobody assigned, and everything the agent "
+                  "writes is tagged as created by the agent from that channel message. Items already there are skipped.", isSubtle=True),
+        ],
+        [
+            {
+                "type": "Action.Submit", "title": "Approve", "style": "positive", "associatedInputs": "none",
+                "data": {"action": "approve", "proposal_id": pending.proposal_id},
+            },
+            {
+                "type": "Action.Submit", "title": "Reject", "style": "destructive", "associatedInputs": "none",
+                "data": {"action": "reject", "proposal_id": pending.proposal_id},
+            },
+        ],
+    )
+
+
 def pending_proposal_only_card(pending: PendingApproval) -> dict:
-    """The card for a proposal that can be read and rejected but not carried out (a
-    batch of tracker changes): no Approve, no edit box."""
+    """The card for a proposal that can be read and rejected but not carried out (a type nothing applies yet): no Approve, no edit box."""
     return _card(
         [
             _text(pending.summary, size="Large", weight="Bolder"),
@@ -139,10 +161,13 @@ def decision_card(trail: AuditTrail) -> dict:
     what was applied."""
     verb = {"rejected": "Rejected"}.get(trail.status, "Approved")
     writes_risk_log = trail.type in service.RISK_WRITE_TYPES
+    writes_tracker = trail.type in service.TRACKER_WRITE_TYPES
     label = {EOD_PROPOSAL_TYPE: "End-of-day summary", NUDGE_PROPOSAL_TYPE: "Reminder", ESCALATION_PROPOSAL_TYPE: "Escalation"}.get(
-        trail.type, "Risk-log proposal" if writes_risk_log else "Morning brief"
+        trail.type, "Tracker changes" if writes_tracker else "Risk-log proposal" if writes_risk_log else "Morning brief"
     )
-    if writes_risk_log:
+    if writes_tracker:
+        outcome = {"title": "Written to the tracker", "value": trail.sent["target"] if trail.sent else "not written"}
+    elif writes_risk_log:
         outcome = {"title": "Written to the risk log as", "value": trail.sent["target"] if trail.sent else "not written"}
     else:
         outcome = {"title": "Sent to", "value": trail.sent["target"] if trail.sent else "not sent"}
@@ -213,6 +238,8 @@ def _card_for(pending: PendingApproval) -> dict:
         return pending_brief_card(pending)
     if pending.type in service.RISK_WRITE_TYPES:
         return pending_risk_card(pending)
+    if pending.type in service.TRACKER_WRITE_TYPES:
+        return pending_tracker_card(pending)
     return pending_proposal_only_card(pending)
 
 

@@ -37,6 +37,9 @@ def _pending(policy, acting_as, db_path) -> None:
         if item.type in service.RISK_WRITE_TYPES:
             _pending_risk_entry(item, policy, acting_as, db_path)
             continue
+        if item.type in service.TRACKER_WRITE_TYPES:
+            _pending_tracker_changes(item, policy, acting_as, db_path)
+            continue
         if item.type not in service.MESSAGE_TYPES:
             _pending_proposal_only(item, policy, acting_as, db_path)
             continue
@@ -95,16 +98,36 @@ def _pending_risk_entry(item, policy, acting_as, db_path) -> None:
                 _done("warning", result)
 
 
+def _pending_tracker_changes(item, policy, acting_as, db_path) -> None:
+    """A batch of tracker changes from a channel record (PM-26): Approve creates the items and adds the comments in the tracker. It is
+    approved whole or rejected: no edit box. Each item shows the channel message it came from and its whole line."""
+    with st.container(border=True):
+        st.subheader(item.summary)
+        created = item.created_at.split(".")[0].replace("T", " ") + " UTC"
+        st.caption(f"proposal {item.proposal_id[:8]}… · proposed {created} · {item.type}")
+        st.caption("Approving writes these to the tracker: new items are blocked with nobody assigned, everything written is tagged as "
+                   "created by the agent from that channel message, and items already there are skipped. Auto-approve never takes one.")
+        with st.expander("What the agent proposed", expanded=True):
+            st.text(item.content)
+        reason = st.text_input("Reason, if rejecting (optional)", key=f"reason_{item.proposal_id}")
+        approve_col, reject_col = st.columns(2)
+        if acting_as:
+            if approve_col.button("Approve", key=f"approve_{item.proposal_id}", type="primary"):
+                result = service.approve_and_send(item.proposal_id, approver_id=acting_as, policy=policy, db_path=db_path)
+                _done("success" if result.outcome == service.APPLIED_OUTCOME else "warning", result)
+            if reject_col.button("Reject", key=f"reject_{item.proposal_id}"):
+                result = service.reject(item.proposal_id, approver_id=acting_as, reason=reason or None, policy=policy, db_path=db_path)
+                _done("warning", result)
+
+
 def _pending_proposal_only(item, policy, acting_as, db_path) -> None:
-    """A proposal this service can show and reject but not carry out (a batch of tracker
-    changes, PM-26): no Approve and no edit box, and the page says why."""
+    """A proposal this service can show and reject but not carry out (a type nothing applies yet): no Approve and no edit box."""
     with st.container(border=True):
         st.subheader(item.summary)
         created = item.created_at.split(".")[0].replace("T", " ") + " UTC"
         st.caption(f"proposal {item.proposal_id[:8]}… · proposed {created} · {item.type}")
         st.caption(
-            "Applying an approved batch of tracker changes is not built yet, so there is no Approve here: "
-            "you can read it and reject it. Nothing is written to the tracker."
+            "Nothing applies an approved proposal of this kind yet, so there is no Approve here: you can read it and reject it."
         )
         with st.expander("What the agent proposed", expanded=True):
             st.text(item.content)
@@ -121,10 +144,11 @@ def _unsent(policy, acting_as, db_path) -> None:
     if not unsent:
         return
     st.header("Approved, not carried out")
-    st.caption("These were approved but the send, or the write to the risk log, failed. Retrying does it once.")
+    st.caption("These were approved but the send, or the write to the risk log or the tracker, failed. Retrying does it once.")
     for proposal in unsent:
         with st.container(border=True):
-            where = "the risk log" if proposal.type in service.RISK_WRITE_TYPES else channel_name(proposal.payload.get("target_channel", "?"), p1_db_path())
+            where = ("the risk log" if proposal.type in service.RISK_WRITE_TYPES else "the tracker" if proposal.type in service.TRACKER_WRITE_TYPES
+                     else channel_name(proposal.payload.get("target_channel", "?"), p1_db_path()))
             st.write(f"{proposal.payload.get('local_date', '?')} → {where} · approved by {proposal.approver_id}")
             if acting_as and st.button("Retry", key=f"retry_{proposal.id}"):
                 result = service.send_approved(proposal.id, policy=policy, db_path=db_path)

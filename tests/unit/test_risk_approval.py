@@ -223,15 +223,18 @@ def test_a_batch_where_everything_is_already_covered_is_refused(seeded_db_path, 
     assert result.outcome == service.REFUSED and "nothing to write" in result.detail and ProposalStore(seeded_db_path).get(pid).status == PENDING
 
 
-def test_a_tracker_batch_still_cannot_be_approved(seeded_db_path, tmp_path):
+def test_approving_the_tracker_batch_writes_the_tracker_and_not_the_risk_log(seeded_db_path, tmp_path):
     path = tmp_path / "r.json"
     path.write_text(json.dumps(RECORD), encoding="utf-8")
     view = TrackerView.from_adapters(TrackerMock(db_path=seeded_db_path), RiskLogMock(db_path=seeded_db_path))
     tracker = consume(path, view, db_path=seeded_db_path).tracker.proposal_id
+    before = risk_rows()
 
     result = approve(seeded_db_path, tracker)
 
-    assert result.outcome == service.REFUSED and "tracker change" in result.detail and ProposalStore(seeded_db_path).get(tracker).status == PENDING
+    assert result.outcome == service.APPLIED_OUTCOME and "in the tracker" in result.detail
+    assert risk_rows() == before  # the two batches are separate decisions: approving one does not do the other
+    assert ProposalStore(seeded_db_path).get(tracker).status == APPLIED
 
 
 def test_rejecting_a_risk_proposal_is_unchanged_and_writes_nothing(seeded_db_path, gaps):
@@ -324,6 +327,19 @@ def test_a_failed_write_leaves_the_proposal_approved_and_a_retry_writes_it_once(
     assert retry.outcome == service.APPLIED_OUTCOME and again.outcome == service.REFUSED  # applied once, never twice
     (entry,) = [r for r in risk_rows() if r.related_item_id == "PM-014"]
     assert entry.severity == "high"  # the retry keeps what the approver chose
+
+
+def test_a_risk_write_and_its_retry_need_no_teams_publisher(seeded_db_path, gaps, monkeypatch):
+    def no_publisher():
+        raise RuntimeError("TEAMS_PUBLISHER_MODE=power_automate but POWER_AUTOMATE_FLOW_URL is not set")
+
+    monkeypatch.setattr(service, "get_teams_publisher", no_publisher)
+    flaky = FlakyLog(live_risk_log_path(), failures=1)
+
+    first = approve(seeded_db_path, gaps["PM-014"], risk_log=flaky)
+    retry = service.send_approved(gaps["PM-014"], policy=APPROVERS, risk_log=flaky, db_path=seeded_db_path)
+
+    assert first.outcome == service.SEND_FAILED and retry.outcome == service.APPLIED_OUTCOME
 
 
 # --- every surface leaves the same rows ------------------------------------------------------------------------------------------

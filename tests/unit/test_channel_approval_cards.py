@@ -80,14 +80,30 @@ def test_a_reworded_item_says_what_it_replaces(batches, tmp_path):
     assert "replaces an earlier wording" in content and "The adapter payload shape is undocumented." in content
 
 
-def test_the_tracker_batch_card_can_be_read_and_rejected_but_not_approved(batches):
+def test_the_tracker_batch_card_shows_the_whole_list_and_offers_approve_and_reject_with_no_inputs(batches):
     listed = cards.handle_list_pending({}, db_path=batches["db"])["approvals"]
 
     card = {a["proposal_id"]: a for a in listed}[batches["tracker"]]["card"]
 
-    assert [a["title"] for a in card["actions"]] == ["Reject"]
-    text = json.dumps(card)
-    assert "not built yet" in text and "Project Gamma" in text
+    assert [a["title"] for a in card["actions"]] == ["Approve", "Reject"]
+    assert not [e for e in card["body"] if e.get("type", "").startswith("Input.")]  # nothing to fill in: approved whole or rejected
+    assert "Project Gamma" in json.dumps(card) and "Approving writes these to the tracker" in json.dumps(card)
+
+
+def test_a_clipped_title_is_shown_with_the_whole_line_so_the_approver_reads_what_was_said(seeded_db_path, tmp_path):
+    long_line = ("The adapter on the copilot studio side requires a payload shape that has not been documented, and nobody has said "
+                 "when the vendor will send it, so the whole integration is waiting on an answer we have asked for twice already.")
+    record = dict(RECORD, blockers=[{"message_id": "m9", "text": long_line, "quote": None}], updates=[])
+    path = tmp_path / "long.json"
+    path.write_text(json.dumps(record), encoding="utf-8")
+    view = TrackerView.from_adapters(TrackerMock(db_path=seeded_db_path), RiskLogMock(db_path=seeded_db_path))
+    result = consume(path, view, db_path=seeded_db_path)
+
+    pending = {p.proposal_id: p for p in service.list_pending_approvals(db_path=seeded_db_path)}
+
+    for proposal_id in (result.tracker.proposal_id, result.risk.proposal_id):
+        content = pending[proposal_id].content
+        assert "..." in content.splitlines()[0] and f"the whole line: {long_line}" in content  # clipped title, then everything that was said
 
 
 def test_the_risk_batch_card_offers_a_severity_to_pick_approve_and_reject(batches):
@@ -103,9 +119,9 @@ def test_the_risk_batch_card_offers_a_severity_to_pick_approve_and_reject(batche
     assert card["actions"][1]["associatedInputs"] == "none"  # rejecting needs no severity
 
 
-def test_only_the_risk_batch_is_executable_the_tracker_batch_writes_nothing(batches):
-    assert CHANNEL_RISK_PROPOSAL_TYPE in service.EXECUTABLE_TYPES and CHANNEL_TRACKER_PROPOSAL_TYPE not in service.EXECUTABLE_TYPES
-    assert CHANNEL_RISK_PROPOSAL_TYPE not in service.MESSAGE_TYPES  # it is never posted, never auto-approved
+def test_both_batches_are_executable_writes_and_neither_is_a_message(batches):
+    assert {CHANNEL_RISK_PROPOSAL_TYPE, CHANNEL_TRACKER_PROPOSAL_TYPE} <= service.EXECUTABLE_TYPES
+    assert not {CHANNEL_RISK_PROPOSAL_TYPE, CHANNEL_TRACKER_PROPOSAL_TYPE} & service.MESSAGE_TYPES  # never posted, never auto-approved
 
 
 def test_rejecting_a_batch_from_teams_leaves_the_same_audit_record_as_the_command_line(batches, tmp_path, monkeypatch):

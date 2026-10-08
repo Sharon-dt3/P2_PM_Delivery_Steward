@@ -42,10 +42,10 @@ Approving in Teams, on the command line (`scripts/approve.py`) and in the dashbo
 rejecting with and without a reason, and an approval or rejection by someone who may not, and compares every row written: the audit events,
 the send attempts and the proposal itself. They are equal.
 
-Three kinds of card. A **message** (brief, summary, reminder, escalation): an edit box, Approve, Reject. A **risk-log proposal** (a gap entry, or
+Three kinds of card (every one is a decision by a person; nothing is applied without Approve). A **message** (brief, summary, reminder, escalation): an edit box, Approve, Reject. A **risk-log proposal** (a gap entry, or
 the risk batch from P1's outcome record): a severity picker (`severity`, default medium), Approve (writes it to the risk log, outcome `applied`) and
-Reject; no edit box. A **tracker batch**: Reject only, because applying tracker changes is not built (`pm.approval.service.EXECUTABLE_TYPES`).
-The agent proposes no severity; the approver picks one, or `medium` is written and the audit says nobody chose.
+Reject; no edit box. A **tracker batch**: no inputs, Approve (creates the items and adds the comments in the tracker, outcome `applied`) and Reject;
+every item shows the channel message it came from and its whole line. The agent proposes no severity; the approver picks one, or `medium` is written and the audit says nobody chose.
 
 ## Not built (needs a tenant and a person in the maker portal)
 

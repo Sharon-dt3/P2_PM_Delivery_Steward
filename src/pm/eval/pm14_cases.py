@@ -21,8 +21,10 @@ Two assertions, both of which must pass (the row's acceptance test):
    the adapter was actually handed. GC6-audit-gap-count is the number of missing or
    wrong fields: a hard zero.
 
-The same two assertions are then made for the other thing an approval can do: write to the RISK LOG
-(GC6-risk-write-bypass-count, GC6-risk-audit-gap-count). A risk-log proposal (here, the risk batch made from a
+The same two assertions are then made for the other things an approval can do: write to the RISK LOG
+(GC6-risk-write-bypass-count, GC6-risk-audit-gap-count) and write to the TRACKER (GC6-tracker-write-bypass-count,
+GC6-tracker-audit-gap-count; here the batch is the one made from a channel record, attacked the same ways, and the audit is read back
+from the items and comments themselves: what was created, with no assignee and traced to its message, what was commented, what was skipped). A risk-log proposal (here, the risk batch made from a
 channel record by the real consumer) is attacked the same ways, pending and rejected, and an attempt lands if the
 risk log file changed, the runtime copy of it changed, a "sent" row was logged, anything reached the adapter, or the
 proposal changed. For the audit, three decided risk proposals (approved with a severity, approved with none so the
@@ -54,7 +56,7 @@ from spine.eval.cases import GoldenCase, GoldenCaseRegistry, MetricResult, at_mo
 from spine.storage.db import run_migrations
 
 from pm.adapters.risk_log import Risk, RiskLogMock
-from pm.adapters.tracker import TrackerMock
+from pm.adapters.tracker import TrackerItem, TrackerMock
 from pm.approval import service
 from pm.approval.audit import AUTO_APPROVER, audit_trail
 from pm.approval.cards import handle_card_action
@@ -445,6 +447,8 @@ def _measure_audit(world: _World) -> MetricResult:
 
 RISK_BYPASS_ID = "GC6-risk-write-bypass-count"
 RISK_AUDIT_ID = "GC6-risk-audit-gap-count"
+TRACKER_BYPASS_ID = "GC6-tracker-write-bypass-count"
+TRACKER_AUDIT_ID = "GC6-tracker-audit-gap-count"
 RISK_ENTRY_COLUMNS = "id, title, description, severity, status, related_item_id, opened_at, owner"
 
 
@@ -501,8 +505,27 @@ class _RiskWorld(_World):
     def runtime_rows(self) -> list[tuple]:
         return self.sql(f"SELECT {RISK_ENTRY_COLUMNS} FROM risks ORDER BY id")
 
+    def tracker_rows(self) -> tuple:
+        return (tuple(self.sql("SELECT * FROM items ORDER BY id")), tuple(self.sql("SELECT * FROM item_comments ORDER BY id")))
+
     def state(self, proposal_id: str) -> tuple:
-        return (self.row(proposal_id), self.risk_csv.read_bytes(), tuple(self.runtime_rows()))
+        return (self.row(proposal_id), self.risk_csv.read_bytes(), tuple(self.runtime_rows()), self.tracker_rows())
+
+    def propose_tracker(self, comment_text: str | None = None) -> str:
+        """A fresh tracker-changes proposal from the real consumer: one comment on PM-016 and one new item (a blocker naming none)."""
+        self._records += 1
+        n = self._records
+        self.last_comment_text = comment_text or f"PM-016 note number {n} was reviewed today."
+        record = {
+            "schema_version": "1.0", "channel_id": CHANNEL_ID, "channel_display_name": "GC6 channel", "date": "2026-09-18", "allowlisted": True,
+            "roster": [], "generated_at": "2026-09-18T11:30:00+00:00", "participation": [], "decisions": [], "questions": [],
+            "updates": [{"message_id": f"gc6-u{n}", "text": self.last_comment_text, "quote": None}],
+            "blockers": [{"message_id": f"gc6-t{n}", "text": f"The vendor feed number {n} has no documented schema.", "quote": None}],
+        }
+        path = self.directory / f"record_{n}.json"
+        path.write_text(json.dumps(record), encoding="utf-8")
+        view = TrackerView.from_adapters(TrackerMock(db_path=self.db), RiskLogMock(db_path=self.db))
+        return consume(path, view, db_path=self.db).tracker.proposal_id
 
 
 @dataclass
@@ -533,6 +556,18 @@ def _approve_risk_by(who: str, severity: str | None) -> Callable[[_RiskCase], ob
         return service.approve_and_send(c.proposal_id, approver_id=who, severity=severity, publisher=c.spy, policy=POLICY, db_path=c.db)
 
     return run
+
+
+def _tracker_guarded_send(c: _RiskCase) -> None:
+    forged = TrackerItem(id="PM-999", title="forged", status="blocked", sprint_id="sprint-13", created_at="2026-09-18")
+    guarded_send(c.proposal_id, action_type="tracker_write", target="PM-999",
+                 send_fn=lambda: TrackerMock(db_path=c.db).create_item(forged), db_path=c.db)
+
+
+def _rewrite_tracker_payload(c: _RiskCase) -> None:
+    payload = json.loads(c.world.row(c.proposal_id)[1])
+    payload["items"] = [{**payload["items"][0], "body": "tampered after the decision"}, *payload["items"][1:]]
+    ProposalStore(c.db).refresh_payload(c.proposal_id, payload=payload)
 
 
 def _rewrite_risk_payload(c: _RiskCase) -> None:
@@ -569,12 +604,19 @@ RISK_ATTEMPTS: list[Attempt] = [
 ]
 
 
-def _try_risk(attempt: Attempt) -> tuple[bool, str]:
-    """(did a write land or did the attempt end unexpectedly, how it ended), on a fresh database and a fresh risk log."""
+TRACKER_ATTEMPTS: list[Attempt] = [
+    Attempt(a.name, a.state, _tracker_guarded_send if a.run is _risk_guarded_send else _rewrite_tracker_payload
+            if a.run is _rewrite_risk_payload else a.run)
+    for a in RISK_ATTEMPTS
+]
+
+
+def _try_batch(attempt: Attempt, propose: str) -> tuple[bool, str]:
+    """(did a write land or did the attempt end unexpectedly, how it ended), on a fresh database, risk log and tracker."""
     with tempfile.TemporaryDirectory(prefix="pm_gc6_risk_") as tmp:
         world = _RiskWorld(Path(tmp))
         with _risk_log_at(world.risk_csv):
-            proposal_id = world.propose_risk()
+            proposal_id = getattr(world, propose)()
             if attempt.state == "rejected":
                 service.reject(proposal_id, approver_id=APPROVER, reason="gc6", policy=POLICY, db_path=world.db)
             case = _RiskCase(world, proposal_id)
@@ -587,26 +629,34 @@ def _try_risk(attempt: Attempt) -> tuple[bool, str]:
     return landed or not refused, how
 
 
-def _measure_risk_bypasses() -> MetricResult:
+def _measure_batch_bypasses(attempts: list[Attempt], propose: str, metric_id: str, what: str) -> MetricResult:
     totals = {"pending": [0, 0], "rejected": [0, 0]}
     how: Counter[str] = Counter()
     first: str | None = None
-    for attempt in RISK_ATTEMPTS:
-        failed, label = _try_risk(attempt)
+    for attempt in attempts:
+        failed, label = _try_batch(attempt, propose)
         totals[attempt.state][0] += 1
         totals[attempt.state][1] += failed
         how[label] += 1
         if failed and first is None:
             first = f"{attempt.state}: {attempt.name} ({label})"
     bypassed = sum(failed for _, failed in totals.values())
-    detail = "; ".join(f"{s}: {n - b} of {n} risk-log write attempts blocked" for s, (n, b) in totals.items())
+    detail = "; ".join(f"{s}: {n - b} of {n} {what} write attempts blocked" for s, (n, b) in totals.items())
     detail += "; blocked by " + ", ".join(f"{label} x{count}" for label, count in sorted(how.items()))
     return MetricResult(
-        metric_id=RISK_BYPASS_ID,
-        name="direct risk-log write attempts that got through on a pending or rejected proposal (hard zero)",
+        metric_id=metric_id,
+        name=f"direct {what} write attempts that got through on a pending or rejected proposal (hard zero)",
         measured=bypassed, target=0, comparator_name="at_most", passed=at_most(bypassed, 0),
         detail=detail + (f"; first bypass: {first}" if first else ""),
     )
+
+
+def _measure_risk_bypasses() -> MetricResult:
+    return _measure_batch_bypasses(RISK_ATTEMPTS, "propose_risk", RISK_BYPASS_ID, "risk-log")
+
+
+def _measure_tracker_bypasses() -> MetricResult:
+    return _measure_batch_bypasses(TRACKER_ATTEMPTS, "propose_tracker", TRACKER_BYPASS_ID, "tracker")
 
 
 def _check_risk_decision(
@@ -717,11 +767,116 @@ def _measure_risk_audit() -> MetricResult:
     )
 
 
+def _check_tracker_decision(
+    world: _RiskWorld, label: str, proposal_id: str, *, approver: str, window: tuple[datetime, datetime], original: list[dict],
+    before: tuple, expected_skips: int | None,
+) -> list[str]:
+    """Read the raw rows for one decided tracker batch and report every field that is missing or wrong. `expected_skips` is how many items
+    the writer should have skipped as already there, or None for a rejection (nothing may have been written at all)."""
+    gaps: list[str] = []
+    status, payload_json, approver_id, decided_at = world.row(proposal_id)
+    payload = json.loads(payload_json)
+    decision_action = "proposal.rejected" if expected_skips is None else "proposal.approved"
+    events = world.sql(
+        "SELECT actor, action, details, created_at FROM audit WHERE entity_type = 'proposal' AND entity_id = ? ORDER BY id", proposal_id,
+    )
+    decision = next((e for e in events if e[1] == decision_action), None)
+    items_before, comments_before = before
+    new_items = [r for r in world.tracker_rows()[0] if r not in items_before]
+    new_comments = [r for r in world.tracker_rows()[1] if r not in comments_before]
+    sent = world.sql("SELECT action_type, target FROM write_log WHERE proposal_id = ? AND status = 'sent' ORDER BY id", proposal_id)
+
+    if approver_id != approver:
+        gaps.append(f"{label}: approver is {approver_id!r}, expected {approver!r}")
+    if decision is None or decision[0] != approver:
+        gaps.append(f"{label}: approver not in the audit record ({decision_action})")
+    if not _within(decided_at, window):
+        gaps.append(f"{label}: timestamp {decided_at!r} missing or outside the decision window")
+    if decision is None or not _within(decision[3], window):
+        gaps.append(f"{label}: timestamp not in the audit record")
+    if world.original_items(proposal_id) != original:
+        gaps.append(f"{label}: original payload is not what the agent proposed")
+    if world.spy.calls:
+        gaps.append(f"{label}: a tracker decision posted something to the adapter")
+
+    if expected_skips is None:  # rejected: nothing applied anywhere
+        if sent or status == "applied" or new_items or new_comments:
+            gaps.append(f"{label}: something was applied to a rejected proposal")
+        if payload.get("items") != original:
+            gaps.append(f"{label}: applied payload changed on a rejected proposal")
+    else:
+        details = json.loads(next((e[2] for e in events if e[1] == "proposal.applied"), "{}"))
+        applied_by = next((e[0] for e in events if e[1] == "proposal.applied"), None)
+        if status != "applied":
+            gaps.append(f"{label}: the proposal is {status!r}, not applied")
+        creates = [i for i in original if i["kind"] == "create"]
+        comments = [i for i in original if i["kind"] == "comment"]
+        if len(new_items) != len(creates):
+            gaps.append(f"{label}: {len(new_items)} items created for {len(creates)} proposed")
+        for row, item in zip(new_items, creates):  # items: id, title, status, sprint_id, assignee_id, created_at, blocked_since, source_message_id
+            wanted = (item["title"], item["status"], item["sprint_id"], None, item["reference"]["date"], item["reference"]["message_id"])
+            if (row[1], row[2], row[3], row[4], row[5], row[7]) != wanted:
+                gaps.append(f"{label}: {row[0]} is not what was approved (title, status, sprint, assignee, date and source message)")
+            note = [c for c in new_comments if c[1] == row[0]]
+            if len(note) != 1 or not note[0][3].startswith("Created by the PM agent from") or "ai-created" not in json.loads(note[0][4]):
+                gaps.append(f"{label}: {row[0]} has no tagged note saying where it came from")
+        written = [c for c in comments if not any(c["body"] == nc[3] and c["item_id"] == nc[1] for nc in new_comments)]
+        if len(written) != expected_skips:
+            gaps.append(f"{label}: {len(written)} comment(s) not written, expected {expected_skips} skipped as already there")
+        for item in comments:
+            match = [c for c in new_comments if c[1] == item["item_id"] and c[3] == item["body"]]
+            if match and not {"from-channel", "ai-created"} <= set(json.loads(match[0][4])):
+                gaps.append(f"{label}: the comment on {item['item_id']} is not tagged as written by the agent from the channel")
+        if len(new_comments) != len(new_items) + len(comments) - expected_skips:
+            gaps.append(f"{label}: {len(new_comments)} comments written, expected {len(new_items) + len(comments) - expected_skips}")
+        touched = sorted({r[0] for r in new_items} | {c[1] for c in new_comments})
+        if sent != [("tracker_write", ",".join(touched))]:
+            gaps.append(f"{label}: the write log does not record what was written ({sent})")
+        if applied_by != approver or details.get("created") != [r[0] for r in new_items] or len(details.get("skipped", [])) != expected_skips:
+            gaps.append(f"{label}: the audit record does not say who applied what, and what was skipped")
+
+    trail = audit_trail(proposal_id, db_path=world.db)  # the app's own view must agree with the raw rows
+    if (trail.approver_id, trail.decided_at, trail.original_proposal.get("items")) != (approver_id, decided_at, original):
+        gaps.append(f"{label}: the application's audit trail disagrees with the raw rows")
+    return gaps
+
+
+def _measure_tracker_audit() -> MetricResult:
+    gaps: list[str] = []
+    with tempfile.TemporaryDirectory(prefix="pm_gc6_tracker_audit_") as tmp:
+        world = _RiskWorld(Path(tmp))
+        with _risk_log_at(world.risk_csv):
+            first_comment = None
+            for label, expected_skips in (("approved", 0), ("approved with a comment already there", 1), ("rejected", None)):
+                pid = world.propose_tracker(comment_text=first_comment if expected_skips == 1 else None)
+                first_comment = first_comment or world.last_comment_text
+                original = world.original_items(pid)
+                before = world.tracker_rows()
+                moment = datetime.now(timezone.utc)
+                if expected_skips is None:
+                    service.reject(pid, approver_id=APPROVER, reason="gc6", policy=POLICY, db_path=world.db)
+                else:
+                    service.approve_and_send(pid, approver_id=APPROVER, publisher=world.spy, policy=POLICY, db_path=world.db)
+                gaps += _check_tracker_decision(world, label, pid, approver=APPROVER, window=(moment, datetime.now(timezone.utc)),
+                                                original=original, before=before, expected_skips=expected_skips)
+    return MetricResult(
+        metric_id=TRACKER_AUDIT_ID,
+        name="audit-record fields missing or wrong across three decided tracker batches (hard zero)",
+        measured=len(gaps), target=0, comparator_name="at_most", passed=at_most(len(gaps), 0),
+        detail=(
+            "checked approver, timestamp, original payload and what was written (the items with their status, sprint, no assignee and source "
+            "message; the tagged comments; what was skipped as already there; the write log) for: approved, approved with a comment already "
+            "there, rejected"
+            + (f"; first gap: {gaps[0]}" if gaps else "")
+        ),
+    )
+
+
 def measure_gc6() -> list[MetricResult]:
     with tempfile.TemporaryDirectory(prefix="pm_gc6_") as tmp:
         world = _World(Path(tmp))
         messages = [_measure_bypasses(world), _measure_audit(world)]
-    return [*messages, _measure_risk_bypasses(), _measure_risk_audit()]
+    return [*messages, _measure_risk_bypasses(), _measure_risk_audit(), _measure_tracker_bypasses(), _measure_tracker_audit()]
 
 
 def register(registry: GoldenCaseRegistry) -> None:

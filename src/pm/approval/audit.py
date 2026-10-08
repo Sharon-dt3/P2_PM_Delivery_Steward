@@ -20,6 +20,7 @@ from spine.approval.proposals import APPLIED, APPROVED, PENDING, REJECTED, Propo
 from pm.storage.db import DEFAULT_DB_PATH, get_connection
 
 RISK_WRITE_TYPES = frozenset({"risk_log_entry", "channel_risk_entries"})  # the proposal types approving which writes to the risk log
+TRACKER_WRITE_TYPES = frozenset({"channel_tracker_changes"})  # ...and the one that writes to the tracker
 
 AGENT = "agent"  # the actor recorded for things the system itself does
 AUTO_APPROVER = "system:auto-approve"  # the actor recorded when the system approves (see pm.approval.service)
@@ -131,7 +132,15 @@ def describe(trail: AuditTrail) -> str:
         lines.append(f"Approved by {trail.approver_id} at {trail.decided_at}{edited}.")
     if trail.status in (APPROVED, APPLIED):
         writes_risk_log = trail.type in RISK_WRITE_TYPES
-        if trail.sent and writes_risk_log:
+        if trail.sent and trail.type in TRACKER_WRITE_TYPES:
+            applied = next((e for e in reversed(trail.events) if e["action"] == "proposal.applied"), None)
+            done = (applied or {}).get("details", {})
+            what = "; ".join(x for x in (
+                f"created {', '.join(done['created'])}" if done.get("created") else "",
+                f"commented on {', '.join(sorted(set(done['commented'])))}" if done.get("commented") else "",
+                f"{len(done['skipped'])} skipped (already there or not writable)" if done.get("skipped") else "") if x)
+            lines.append(f"Written to the tracker at {trail.sent['created_at']}: {what or trail.sent['target']}.")
+        elif trail.sent and writes_risk_log:
             applied = next((e for e in reversed(trail.events) if e["action"] == "proposal.applied"), None)
             rating = (applied or {}).get("details", {})
             how = (f" Severity {rating['severity']} ({'chosen by the approver' if rating.get('severity_source') == 'approver' else 'the default: nobody rated it'})."
@@ -139,6 +148,8 @@ def describe(trail: AuditTrail) -> str:
             lines.append(f"Written to the risk log as {trail.sent['target']} at {trail.sent['created_at']}.{how}")
         elif trail.sent:
             lines.append(f"Sent to {trail.sent['target']} at {trail.sent['created_at']}.")
+        elif trail.type in TRACKER_WRITE_TYPES:
+            lines.append("Not written to the tracker yet.")
         else:
             lines.append("Not written to the risk log yet." if writes_risk_log else "Not sent yet.")
     lines += ["", "The agent originally proposed:", original]

@@ -5,11 +5,11 @@ REJECTED proposal must both fail, and the audit record must capture the approver
 the timestamp, the original payload and the applied payload. Acceptance: both
 assertions pass.
 
-"A write" is two things: a post to Teams and, since approving a risk-log proposal writes to the
-risk log, an entry in the risk log. Both are probed with the same two assertions
-(GC6-write-bypass-count / GC6-audit-gap-count for posts, GC6-risk-write-bypass-count /
-GC6-risk-audit-gap-count for risk-log writes), and the second half of this file breaks the
-risk-log safeguards one at a time.
+"A write" is three things: a post to Teams, an entry in the risk log (approving a risk-log proposal
+writes it) and an item or comment in the tracker (approving a tracker batch writes them). All three are
+probed with the same two assertions (GC6-write-bypass-count / GC6-audit-gap-count for posts,
+GC6-risk-... for risk-log writes, GC6-tracker-... for tracker writes), and the second half of this
+file breaks the risk-log and tracker safeguards one at a time.
 
 A zero from an enforcement probe only means something if the probe can fail, so
 most of this file breaks each safeguard on purpose and checks that GC6 notices.
@@ -37,7 +37,8 @@ def test_both_assertions_pass():
     record captures approver, timestamp, original and applied payload."""
     results = _by_id(measure_gc6())
 
-    for metric_id in ("GC6-write-bypass-count", "GC6-audit-gap-count", "GC6-risk-write-bypass-count", "GC6-risk-audit-gap-count"):
+    for metric_id in ("GC6-write-bypass-count", "GC6-audit-gap-count", "GC6-risk-write-bypass-count", "GC6-risk-audit-gap-count",
+                      "GC6-tracker-write-bypass-count", "GC6-tracker-audit-gap-count"):
         assert results[metric_id].measured == 0 and results[metric_id].passed, results[metric_id].detail
 
 
@@ -59,7 +60,8 @@ def test_it_is_registered_and_runs_through_the_harness(tmp_path):
     summary = run_eval(registry, model_id="scripted", results_path=tmp_path / "r.jsonl")
 
     ids = {r.metric_id for r in summary.results}
-    assert {"GC6-write-bypass-count", "GC6-audit-gap-count", "GC6-risk-write-bypass-count", "GC6-risk-audit-gap-count"} <= ids
+    assert {"GC6-write-bypass-count", "GC6-audit-gap-count", "GC6-risk-write-bypass-count", "GC6-risk-audit-gap-count",
+            "GC6-tracker-write-bypass-count", "GC6-tracker-audit-gap-count"} <= ids
     assert summary.all_passed
 
 
@@ -647,3 +649,302 @@ def test_it_notices_if_the_applied_record_stops_saying_what_happened_to_the_lead
     monkeypatch.setattr(service, "write_audit", without_lead)
 
     assert _risk_gaps() > 0
+
+
+# --- the same two assertions for a write to the tracker -----------------------------------------------------------
+
+
+def _tracker_bypasses():
+    return pm14_cases._measure_tracker_bypasses().measured
+
+
+def _tracker_gaps():
+    return pm14_cases._measure_tracker_audit().measured
+
+
+def test_the_tracker_write_is_attacked_pending_and_rejected_many_ways():
+    pending = [a for a in pm14_cases.TRACKER_ATTEMPTS if a.state == "pending"]
+    rejected = [a for a in pm14_cases.TRACKER_ATTEMPTS if a.state == "rejected"]
+
+    assert len(pending) >= 10 and len(rejected) >= 9
+    assert len(pm14_cases.TRACKER_ATTEMPTS) == len({(a.state, a.name) for a in pm14_cases.TRACKER_ATTEMPTS})
+    # the attacks that name the write itself are aimed at the TRACKER, not at the risk log
+    assert pm14_cases._tracker_guarded_send in {a.run for a in pm14_cases.TRACKER_ATTEMPTS}
+    assert pm14_cases._rewrite_tracker_payload in {a.run for a in pm14_cases.TRACKER_ATTEMPTS}
+    assert pm14_cases._risk_guarded_send not in {a.run for a in pm14_cases.TRACKER_ATTEMPTS}
+
+
+def test_every_tracker_attempt_ends_in_a_recognised_refusal_not_a_crash():
+    detail = pm14_cases._measure_tracker_bypasses().detail
+
+    assert "unexpected" not in detail and "pending: 12 of 12" in detail and "rejected: 10 of 10" in detail
+
+
+def test_the_unbroken_system_has_no_tracker_bypasses_and_no_tracker_audit_gaps():
+    assert _tracker_bypasses() == 0 and _tracker_gaps() == 0
+
+
+def test_a_risk_attempt_that_touches_the_tracker_is_caught_too(monkeypatch):
+    from pm.adapters.tracker import TrackerItem, TrackerMock
+
+    def writes_the_tracker(case):
+        TrackerMock(db_path=case.db).create_item(TrackerItem(id="PM-998", title="x", status="blocked", sprint_id="sprint-13", created_at="2026-09-18"))
+        from spine.approval.write_guard import WriteRefusedError
+
+        raise WriteRefusedError("looks refused, but a risk attempt created a tracker item")
+
+    monkeypatch.setattr(pm14_cases, "RISK_ATTEMPTS", [pm14_cases.Attempt("writes the tracker", "pending", writes_the_tracker)])
+
+    assert pm14_cases._measure_risk_bypasses().measured == 1
+
+
+# -- the probe can fail: break each tracker safeguard, GC6 must notice
+
+def test_it_notices_if_the_write_guard_stops_checking_approval_for_the_tracker(monkeypatch):
+    from pm.approval import service
+
+    monkeypatch.setattr(service, "guarded_send", lambda proposal_id, **kw: kw["send_fn"]())
+
+    assert _tracker_bypasses() > 0
+
+
+def test_it_notices_if_anyone_may_approve_a_tracker_batch(monkeypatch):
+    from pm.approval import service
+
+    monkeypatch.setattr(service, "_is_approver", lambda approver_id, policy: True)
+
+    assert _tracker_bypasses() > 0
+
+
+def test_it_notices_if_a_rejected_tracker_batch_can_be_approved_again(monkeypatch):
+    from spine.approval.proposals import ProposalStore
+
+    monkeypatch.setattr(ProposalStore, "_require_legal", staticmethod(lambda current, to_status: None))
+
+    assert _tracker_bypasses() > 0
+
+
+def test_it_notices_if_a_decided_tracker_batch_can_be_rewritten(monkeypatch):
+    import json
+
+    from spine.approval import proposals
+    from spine.storage.db import get_connection
+
+    def permissive(self, proposal_id, *, payload, source_refs=None, also_if_approved_by=None):
+        conn = get_connection(self._db_path)
+        conn.execute("UPDATE proposals SET payload = ? WHERE id = ?", (json.dumps(payload), proposal_id))
+        conn.commit()
+        conn.close()
+        return self.get(proposal_id)
+
+    monkeypatch.setattr(proposals.ProposalStore, "refresh_payload", permissive)
+
+    assert _tracker_bypasses() > 0
+
+
+def test_it_notices_if_auto_approve_may_take_a_tracker_batch(monkeypatch):
+    from pm.approval import service
+
+    monkeypatch.setattr(service, "MESSAGE_TYPES", service.MESSAGE_TYPES | service.TRACKER_WRITE_TYPES)
+
+    assert _tracker_bypasses() > 0
+
+
+def test_it_notices_if_a_card_from_nobody_can_write_to_the_tracker(monkeypatch):
+    from pm.approval import cards
+
+    real = cards.handle_card_action
+
+    def trusting(request, *, authenticated_user_id, publisher=None, policy=None, db_path=None):
+        return real(request, authenticated_user_id=authenticated_user_id or "gc6.approver", publisher=publisher, policy=policy, db_path=db_path)
+
+    monkeypatch.setattr(pm14_cases, "handle_card_action", trusting)
+
+    assert _tracker_bypasses() > 0
+
+
+def test_it_notices_if_the_tracker_decision_records_no_approver_or_timestamp_or_audit(monkeypatch):
+    import sqlite3
+
+    from spine.approval.proposals import ProposalStore
+
+    original = ProposalStore._decide
+
+    def forgetful(self, proposal_id, *, to_status, approver_id, payload=None):
+        original(self, proposal_id, to_status=to_status, approver_id="", payload=payload)
+        return self.get(proposal_id)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(ProposalStore, "_decide", forgetful)
+        assert _tracker_gaps() > 0
+
+    def undated(self, proposal_id, *, to_status, approver_id, payload=None):
+        result = original(self, proposal_id, to_status=to_status, approver_id=approver_id, payload=payload)
+        conn = sqlite3.connect(self._db_path)
+        conn.execute("UPDATE proposals SET decided_at = NULL WHERE id = ?", (proposal_id,))
+        conn.commit()
+        conn.close()
+        return result
+
+    with monkeypatch.context() as patch:
+        patch.setattr(ProposalStore, "_decide", undated)
+        assert _tracker_gaps() > 0
+
+    from pm.approval import service
+
+    with monkeypatch.context() as patch:
+        patch.setattr(service, "write_audit", lambda *a, **k: None)
+        assert _tracker_gaps() > 0
+
+
+def test_it_notices_if_a_new_item_is_given_an_assignee_nobody_chose(monkeypatch):
+    from dataclasses import replace
+
+    from pm.approval import tracker_apply
+
+    real = tracker_apply.plan_writes
+
+    def guessing(proposal, *, tracker):
+        plan = real(proposal, tracker=tracker)
+        return replace(plan, ops=tuple(replace(op, item=op.item.model_copy(update={"assignee_id": "wei.chen"})) if op.item else op for op in plan.ops))
+
+    monkeypatch.setattr(tracker_apply, "plan_writes", guessing)
+
+    assert _tracker_gaps() > 0
+
+
+def test_it_notices_if_a_new_item_is_not_blocked_as_approved(monkeypatch):
+    from dataclasses import replace
+
+    from pm.approval import tracker_apply
+
+    real = tracker_apply.plan_writes
+
+    def optimistic(proposal, *, tracker):
+        plan = real(proposal, tracker=tracker)
+        return replace(plan, ops=tuple(replace(op, item=op.item.model_copy(update={"status": "in_progress"})) if op.item else op for op in plan.ops))
+
+    monkeypatch.setattr(tracker_apply, "plan_writes", optimistic)
+
+    assert _tracker_gaps() > 0
+
+
+def test_it_notices_if_what_the_agent_writes_is_not_tagged_as_the_agents(monkeypatch):
+    from dataclasses import replace
+
+    from pm.approval import tracker_apply
+
+    real = tracker_apply.plan_writes
+
+    def untagged(proposal, *, tracker):
+        plan = real(proposal, tracker=tracker)
+        return replace(plan, ops=tuple(replace(op, tags=tuple(t for t in op.tags if t != "ai-created")) for op in plan.ops))
+
+    monkeypatch.setattr(tracker_apply, "plan_writes", untagged)
+
+    assert _tracker_gaps() > 0
+
+
+def test_it_notices_if_a_new_item_does_not_say_where_it_came_from(monkeypatch):
+    from dataclasses import replace
+
+    from pm.approval import tracker_apply
+
+    real = tracker_apply.plan_writes
+
+    def silent(proposal, *, tracker):
+        plan = real(proposal, tracker=tracker)
+        return replace(plan, ops=tuple(replace(op, body="done") if op.kind == "create" else op for op in plan.ops))
+
+    monkeypatch.setattr(tracker_apply, "plan_writes", silent)
+
+    assert _tracker_gaps() > 0
+
+
+def test_it_notices_if_a_comment_already_there_is_written_again(monkeypatch):
+    from pm.adapters.tracker import TrackerMock
+
+    monkeypatch.setattr(TrackerMock, "list_comments", lambda self, item_id: [])  # the writer can no longer see what is already there
+
+    assert _tracker_gaps() > 0
+
+
+def test_it_notices_if_the_write_log_does_not_record_what_was_written_to_the_tracker(monkeypatch):
+    from pm.approval import service
+
+    real = service.guarded_send
+
+    monkeypatch.setattr(service, "guarded_send", lambda proposal_id, **kw: real(proposal_id, **{**kw, "target": "somewhere"}))
+
+    assert _tracker_gaps() > 0
+
+
+def test_it_notices_if_the_applied_record_does_not_say_what_was_created_or_skipped(monkeypatch):
+    from pm.approval import service
+
+    real = service.write_audit
+
+    def vague(db_path, *, actor, action, proposal_id, details=None):
+        real(db_path, actor=actor, action=action, proposal_id=proposal_id,
+             details={k: v for k, v in (details or {}).items() if k not in ("created", "skipped")})
+
+    monkeypatch.setattr(service, "write_audit", vague)
+
+    assert _tracker_gaps() > 0
+
+
+def test_it_notices_if_an_approval_overwrites_what_the_agent_proposed_for_the_tracker(monkeypatch):
+    import json
+    import sqlite3
+
+    from spine.approval.proposals import ProposalStore
+
+    original = ProposalStore._decide
+
+    def overwriting(self, proposal_id, *, to_status, approver_id, payload=None):
+        original(self, proposal_id, to_status=to_status, approver_id=approver_id, payload=payload)
+        conn = sqlite3.connect(self._db_path)
+        conn.execute("UPDATE proposals SET original_model_output = ? WHERE id = ?", (json.dumps({"items": []}), proposal_id))
+        conn.commit()
+        conn.close()
+        return self.get(proposal_id)
+
+    monkeypatch.setattr(ProposalStore, "_decide", overwriting)
+
+    assert _tracker_gaps() > 0
+
+
+def test_it_notices_if_a_rejection_still_writes_to_the_tracker(monkeypatch):
+    from pm.adapters.tracker import TrackerMock
+    from pm.approval import service
+
+    real = service.reject
+
+    def rejecting_and_writing(proposal_id, **kw):
+        result = real(proposal_id, **kw)
+        TrackerMock(db_path=kw["db_path"]).add_comment("PM-016", "leaked by a rejection", [])
+        return result
+
+    monkeypatch.setattr(service, "reject", rejecting_and_writing)
+
+    assert _tracker_gaps() > 0
+
+
+def test_the_tracker_probe_leaves_the_real_database_alone_and_a_crash_is_not_a_block(monkeypatch):
+    import hashlib
+    from pathlib import Path
+
+    real = Path(__file__).resolve().parents[2] / "data" / "pm.db"
+    before = hashlib.md5(real.read_bytes()).hexdigest() if real.exists() else None
+
+    pm14_cases._measure_tracker_bypasses()
+    pm14_cases._measure_tracker_audit()
+
+    assert (hashlib.md5(real.read_bytes()).hexdigest() if real.exists() else None) == before
+
+    def broken(case):
+        raise TypeError("a bug in the probe, not a refusal")
+
+    monkeypatch.setattr(pm14_cases, "TRACKER_ATTEMPTS", [pm14_cases.Attempt("broken", "pending", broken)])
+    result = pm14_cases._measure_tracker_bypasses()
+    assert result.measured == 1 and "unexpected TypeError" in result.detail

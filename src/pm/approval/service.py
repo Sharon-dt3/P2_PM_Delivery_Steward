@@ -15,10 +15,10 @@ records. Rules enforced here, never in a surface:
 - a real (non-log) publisher may only post to a channel on P1's allowlist, and
   that is checked BEFORE approving, so an out-of-scope proposal cannot be
   approved into a stuck state;
-- approving a risk-log proposal writes to the risk log through the same gate
-  (guarded_send), after pm.approval.risk_apply has checked it can be written, so
-  nothing is left approved-but-not-applied; a tracker batch has nothing to
-  execute yet, so it can only be rejected.
+- approving a risk-log proposal writes to the risk log, and approving a tracker
+  batch writes to the tracker, through the same gate (guarded_send), after
+  pm.approval.risk_apply / tracker_apply has checked it can be written, so
+  nothing is left approved-but-not-applied.
 """
 
 from __future__ import annotations
@@ -42,8 +42,8 @@ from spine.approval.write_guard import WriteRefusedError, guarded_send
 
 from pm.adapters.risk_log import RiskLogStore
 from pm.adapters.teams import get_teams_publisher
-from pm.adapters.tracker import TrackerMock
-from pm.approval import risk_apply
+from pm.adapters.tracker import Tracker, TrackerMock
+from pm.approval import risk_apply, tracker_apply
 from pm.approval.audit import AGENT, AUTO_APPROVER, write_audit
 from pm.approval.proposals import (
     BRIEF_PROPOSAL_TYPE,
@@ -62,15 +62,16 @@ from pm.scheduling.config import P1_CHANNEL_CONFIG_DIR
 from pm.storage.db import DEFAULT_DB_PATH
 
 # What this service can carry out. A message is posted or sent (a brief, an end-of-day summary, a reminder, an escalation); a risk-log
-# proposal is written to the risk log (pm.approval.risk_apply). Everything else -- a batch of tracker changes -- is reviewed here and
-# rejected on the record, but approving one would have nothing to execute, so it is refused up front rather than left half-approved.
+# proposal is written to the risk log (pm.approval.risk_apply); a batch of tracker changes is written to the tracker
+# (pm.approval.tracker_apply). Anything else has nothing to execute, so approving it is refused up front rather than left half-approved.
 MESSAGE_TYPES = frozenset({BRIEF_PROPOSAL_TYPE, EOD_PROPOSAL_TYPE}) | DIRECT_MESSAGE_TYPES
 RISK_WRITE_TYPES = risk_apply.RISK_WRITE_TYPES
-EXECUTABLE_TYPES = MESSAGE_TYPES | RISK_WRITE_TYPES
+TRACKER_WRITE_TYPES = tracker_apply.TRACKER_WRITE_TYPES
+EXECUTABLE_TYPES = MESSAGE_TYPES | RISK_WRITE_TYPES | TRACKER_WRITE_TYPES
 CHANNEL_BATCH_TYPES = frozenset({CHANNEL_TRACKER_PROPOSAL_TYPE, CHANNEL_RISK_PROPOSAL_TYPE})  # PM-26: batches from P1's outcome record
 
 SENT = "sent"
-APPLIED_OUTCOME = "applied"  # a risk-log proposal written to the risk log
+APPLIED_OUTCOME = "applied"  # a risk-log or tracker proposal written to the risk log or the tracker
 REJECTED_OUTCOME = "rejected"
 REFUSED = "refused"
 SEND_FAILED = "send_failed"
@@ -129,8 +130,8 @@ def _not_executable(proposal: Proposal) -> str | None:
     if proposal.type in EXECUTABLE_TYPES:
         return None
     return (
-        f"a {proposal.type} proposal cannot be approved: applying an approved tracker change "
-        "is not built, so approving it would do nothing. It can be reviewed and rejected"
+        f"a {proposal.type} proposal cannot be approved: nothing carries it out, so approving it would do nothing. "
+        "It can be reviewed and rejected"
     )
 
 
@@ -149,6 +150,9 @@ def _batch_line(item: dict) -> str:
         owner = f" (suggested owner {item['suggested_owner']})" if item.get("suggested_owner") else ""
         what = f"New risk entry for {item.get('related_item_id') or 'no item'}{owner}: {item['title']}"
     line = f"- {what}\n    from {ref['channel_display_name']} message {ref['message_id']} on {ref['date']}"
+    full = item.get("source_text")
+    if item["kind"] != "comment" and full and full.strip() != item["title"].strip():
+        line += f"\n    the whole line: {full}"  # the title is clipped; whoever approves reads what was actually said
     if item.get("changed_since"):
         line += f"\n    replaces an earlier wording ({item['changed_since']['earlier_status']}): {item['changed_since']['earlier_text']}"
     return line
@@ -226,13 +230,14 @@ def approve_and_send(
     policy: ApprovalPolicy | None = None,
     store: ProposalStore | None = None,
     risk_log: RiskLogStore | None = None,
+    tracker: Tracker | None = None,
     db_path: str | Path = DEFAULT_DB_PATH,
     now: datetime | None = None,
 ) -> ActionResult:
     """Approve a pending proposal -- optionally with edited text -- and execute
     it in the same call: a message through the adapter, a risk-log proposal into the
     risk log (`severity` is the approver's rating for it; unrated means the default,
-    and the audit says so)."""
+    and the audit says so), a tracker batch into the tracker."""
     policy = policy if policy is not None else load_approval_policy()
     store = store or ProposalStore(db_path)
 
@@ -253,6 +258,8 @@ def approve_and_send(
         return _approve_risk_entries(
             proposal, approver=approver, edited_content=edited_content, severity=severity, risk_log=risk_log, store=store, db_path=db_path,
         )
+    if proposal.type in TRACKER_WRITE_TYPES:  # writes to the tracker, posts nothing; a severity means nothing here and is ignored
+        return _approve_tracker_changes(proposal, approver=approver, edited_content=edited_content, tracker=tracker, store=store, db_path=db_path)
     if publisher_problem:
         return ActionResult(proposal_id, REFUSED, publisher_problem)
 
@@ -317,6 +324,26 @@ def _approve_risk_entries(
     return _execute(pid, actor=approver, publisher=None, policy=None, store=store, db_path=db_path, risk_log=risk_log)
 
 
+def _approve_tracker_changes(
+    proposal: Proposal, *, approver: str, edited_content: str | None, tracker: Tracker | None, store: ProposalStore, db_path,
+) -> ActionResult:
+    """Approve a tracker batch: check it can be written BEFORE approving, record the approval, then write. A refusal is audited and leaves
+    the proposal pending. A batch is approved whole or not at all: it cannot be edited here."""
+    pid = proposal.id
+    if edited_content and _normalise(edited_content) and _normalise(edited_content) != _normalise(proposal.payload.get("content", "")):
+        return _deny(db_path, approver, pid, "approve", "a tracker batch cannot be edited here: approve it as proposed, or reject it")
+    try:
+        tracker_apply.plan_writes(proposal, tracker=tracker or TrackerMock(db_path=db_path))
+    except tracker_apply.TrackerApplyRefused as exc:
+        return _deny(db_path, approver, pid, "approve", str(exc))
+    try:
+        store.approve(pid, approver_id=approver)
+    except IllegalTransitionError as exc:
+        return ActionResult(pid, REFUSED, str(exc))
+    write_audit(db_path, actor=approver, action="proposal.approved", proposal_id=pid, details={"edited": False})
+    return _execute(pid, actor=approver, publisher=None, policy=None, store=store, db_path=db_path, tracker=tracker)
+
+
 def approve_automatically(
     proposal_id: str, *, reason: str, store: ProposalStore | None = None, db_path: str | Path = DEFAULT_DB_PATH,
 ) -> None:
@@ -362,6 +389,7 @@ def send_approved(
     policy: ApprovalPolicy | None = None,
     store: ProposalStore | None = None,
     risk_log: RiskLogStore | None = None,
+    tracker: Tracker | None = None,
     db_path: str | Path = DEFAULT_DB_PATH,
     now: datetime | None = None,
 ) -> ActionResult:
@@ -374,8 +402,8 @@ def send_approved(
         wanted = store.get(proposal_id)
     except ProposalNotFoundError:
         wanted = None
-    if wanted is not None and wanted.type in RISK_WRITE_TYPES:  # a retry of a risk-log write posts nothing
-        return _execute(proposal_id, actor=AGENT, publisher=None, policy=policy, store=store, db_path=db_path, risk_log=risk_log)
+    if wanted is not None and wanted.type in RISK_WRITE_TYPES | TRACKER_WRITE_TYPES:  # a retry of a risk-log or tracker write posts nothing
+        return _execute(proposal_id, actor=AGENT, publisher=None, policy=policy, store=store, db_path=db_path, risk_log=risk_log, tracker=tracker)
     try:
         publisher = publisher if publisher is not None else get_teams_publisher()
     except Exception as exc:  # noqa: BLE001 - reported, never raised past this seam
@@ -449,9 +477,39 @@ def _execute_risk_write(proposal: Proposal, *, actor: str, store: ProposalStore,
     return ActionResult(proposal.id, APPLIED_OUTCOME, f"wrote {', '.join(ids)} to the risk log{skipped}{where}")
 
 
+def _execute_tracker_write(proposal: Proposal, *, actor: str, store: ProposalStore, db_path, tracker: Tracker | None) -> ActionResult:
+    """Write an approved tracker batch to the tracker, through the same gate as a send: guarded_send refuses anything not approved, logs the
+    attempt, and marks the proposal applied. What is written is planned again here from the approved proposal, so a retry after a failed
+    write skips what already landed and finishes the rest."""
+    tracker = tracker or TrackerMock(db_path=db_path)
+    try:
+        plan = tracker_apply.plan_writes(proposal, tracker=tracker)
+    except tracker_apply.TrackerApplyRefused as exc:
+        write_audit(db_path, actor=actor, action="proposal.send_refused", proposal_id=proposal.id, details={"reason": str(exc)})
+        return ActionResult(proposal.id, REFUSED, str(exc))
+    try:
+        guarded_send(proposal.id, action_type="tracker_write", target=",".join(plan.touched), send_fn=lambda: tracker_apply.write(plan, tracker),
+                     store=store, db_path=db_path)
+    except WriteRefusedError as exc:
+        return ActionResult(proposal.id, REFUSED, str(exc))
+    except Exception as exc:  # noqa: BLE001 - guarded_send already logged send_failed; report, never raise
+        write_audit(db_path, actor=actor, action="proposal.send_failed", proposal_id=proposal.id,
+                    details={"error": f"{type(exc).__name__}: {exc}"[:300]})
+        return ActionResult(proposal.id, SEND_FAILED, f"{type(exc).__name__}: {exc}")
+    write_audit(
+        db_path, actor=actor, action="proposal.applied", proposal_id=proposal.id,
+        details={"target": "tracker", "created": plan.created, "commented": plan.commented, "skipped": list(plan.skipped),
+                 **({"default_sprint": plan.default_sprint} if plan.default_sprint else {})},
+    )
+    parts = [f"created {', '.join(plan.created)}" if plan.created else "", f"added {len(plan.commented)} comment(s) on {', '.join(sorted(set(plan.commented)))}" if plan.commented else ""]
+    skipped = f" ({len(plan.skipped)} skipped: already there or not writable)" if plan.skipped else ""
+    placed = f"; new items went to {plan.default_sprint}, the configured default, because no sprint covers their day" if plan.default_sprint else ""
+    return ActionResult(proposal.id, APPLIED_OUTCOME, "in the tracker: " + " and ".join(p for p in parts if p) + skipped + placed)
+
+
 def _execute(
     proposal_id: str, *, actor: str, publisher, policy: ApprovalPolicy | None, store: ProposalStore, db_path, now: datetime | None = None,
-    risk_log: RiskLogStore | None = None,
+    risk_log: RiskLogStore | None = None, tracker: Tracker | None = None,
 ) -> ActionResult:
     try:
         proposal = store.get(proposal_id)
@@ -459,7 +517,9 @@ def _execute(
         return ActionResult(proposal_id, REFUSED, f"no proposal with id {proposal_id!r}")
     if proposal.type in RISK_WRITE_TYPES:
         return _execute_risk_write(proposal, actor=actor, store=store, db_path=db_path, risk_log=risk_log)
-    unsupported = _not_executable(proposal)  # defence in depth: whatever its status, only a message or a risk-log write is carried out
+    if proposal.type in TRACKER_WRITE_TYPES:
+        return _execute_tracker_write(proposal, actor=actor, store=store, db_path=db_path, tracker=tracker)
+    unsupported = _not_executable(proposal)  # defence in depth: whatever its status, only a message, a risk-log write or a tracker write is carried out
     if unsupported:
         return ActionResult(proposal_id, REFUSED, unsupported)
     scope_problem = _out_of_scope(proposal, publisher, policy)
