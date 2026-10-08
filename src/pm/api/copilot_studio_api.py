@@ -28,8 +28,9 @@ The shared key is what stands between "anyone who can reach this URL" and "only 
 the flow that sets it, so the flow, not the card, must set it (docs/copilot_studio/connector_contract.md). A per-user Entra identity
 check is the next step and needs a tenant.
 
-Not built, because it needs a tenant and a person in the Power Platform maker portal: the Copilot Studio agent, the custom connector
-registration and the Power Automate flows themselves (docs/copilot_studio/ says how to make each from this API's /openapi.json).
+Built by hand in the tenant's Power Platform maker portal, from this API's /openapi.json: the custom connector, the approvals flow (one
+real Teams approval verified end to end) and the Copilot Studio agent (not exercised yet: the environment has no Copilot credits).
+docs/copilot_studio/power_automate_flows.md says what exists and what does not.
 
 Run: uv run uvicorn pm.api.copilot_studio_api:app   (never started by a test: tests drive it in process)
 """
