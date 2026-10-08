@@ -11,7 +11,8 @@ in it comes from the seeded sample project.
 | **P1's message store** (`P1_DB_PATH`, default `data/p1_live.db`) | who posted each message and when (the record names no author) | read-only; if it is missing no author is shown, and one is never guessed |
 | **What this agent did with those messages** | tracker items (`source_message_id`) and risk entries whose text cites a message of the record | found by the real message ids; the sample project's items never match |
 
-Every line is one of P1's grounded lines exactly as P1 verified it, with its author and message id, or a fact computed in code (a promise's due
+Every line is one of P1's grounded lines exactly as P1 verified it, with its author and a `[source](...)` link to the exact Teams message (P1's
+stored permalink, the same form as P1's daily digest; with no link stored the line shows the message id, never an invented link), or a fact computed in code (a promise's due
 date, an item made from a message, who had no say). The same facts always make the same message. A section with nothing in it says
 "none recorded"; a long one is cut at 5 lines and says how many more there are.
 
@@ -36,6 +37,19 @@ against the day it was *said*, each marked past due / due today / coming up and 
 A channel brief is a proposal like any other (the same morning-brief and end-of-day-summary types, so the same Teams card, dashboard, audit and
 post): one per channel per day per kind, **nothing sent until a person approves it**, posted only to a channel on P1's allowlist. The payload
 says it came from a channel record and which one, and the proposal keeps every line with the message behind it.
+
+## Automatic end to end
+
+Nothing in a normal day is run by hand:
+
+1. **The scheduler** (`run_scheduler.py --channel-briefs ...`) makes each channel's morning and evening brief at its own time, and from the
+   same record also proposes the **tracker** and **risk-log** batches (`PM_CHANNEL_BATCHES=0` turns that off; reading a record again proposes nothing new).
+2. **A Power Automate flow on a 5-minute timer** calls the API's `ClaimNewApprovals` action (`/claim_new_approvals`). It returns only the pending
+   proposals no card has been sent for, and records each as handed out in the same transaction (`pm.approval.card_delivery`), so a card is posted
+   **once**, and two overlapping runs never get the same proposal. A proposal still undecided after `PM_CARD_RESEND_HOURS` (default 24; 0 = never) is
+   handed out once more as a reminder. The plain `ListPendingApprovals` still answers "what is waiting".
+3. **A person presses Approve** on the card in Teams; the flow calls `CardAction` with their email as the approver.
+4. **Approving a brief posts it** through P1's publish flow to that channel, and only to an allowlisted one.
 
 ## Running it
 
