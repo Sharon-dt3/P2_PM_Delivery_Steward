@@ -445,7 +445,7 @@ def _measure_audit(world: _World) -> MetricResult:
 
 RISK_BYPASS_ID = "GC6-risk-write-bypass-count"
 RISK_AUDIT_ID = "GC6-risk-audit-gap-count"
-RISK_ENTRY_COLUMNS = "id, title, description, severity, status, related_item_id, opened_at"
+RISK_ENTRY_COLUMNS = "id, title, description, severity, status, related_item_id, opened_at, owner"
 
 
 @contextmanager
@@ -474,13 +474,16 @@ class _RiskWorld(_World):
         self.seed_ids = {r["id"] for r in RISKS}
         self._records = 0
 
-    def propose_risk(self) -> str:
+    def propose_risk(self, named_item: str | None = None) -> str:
+        """A fresh risk-log proposal. With `named_item` the blocker names that tracker item, so the proposal suggests the item's assignee
+        as the owner; without, it names none and there is nobody to suggest."""
         self._records += 1
         n = self._records
         record = {
             "schema_version": "1.0", "channel_id": CHANNEL_ID, "channel_display_name": "GC6 channel", "date": "2026-09-18", "allowlisted": True,
             "roster": [], "generated_at": "2026-09-18T11:30:00+00:00", "participation": [], "decisions": [], "questions": [], "updates": [],
-            "blockers": [{"message_id": f"gc6-m{n}", "text": f"The vendor feed number {n} has no documented schema.", "quote": None}],
+            "blockers": [{"message_id": f"gc6-m{n}", "quote": None, "text": (
+                f"{named_item} is blocked on vendor feed number {n}." if named_item else f"The vendor feed number {n} has no documented schema.")}],
         }
         path = self.directory / f"record_{n}.json"
         path.write_text(json.dumps(record), encoding="utf-8")
@@ -655,15 +658,22 @@ def _check_risk_decision(
                 gaps.append(f"{label}: {entry['id']} is not what was approved")
             if item["reference"]["message_id"] not in entry["description"]:
                 gaps.append(f"{label}: {entry['id']} does not say which message justifies it")
-        if [r[0] for r in runtime_new] != ids:
-            gaps.append(f"{label}: the runtime copy of the risk log does not hold what was written")
+        if [(r[0], r[7]) for r in runtime_new] != [(r["id"], r.get("owner") or None) for r in new_rows]:
+            gaps.append(f"{label}: the runtime copy of the risk log does not hold what was written (the owner included)")
         if sent != [("risk_log_write", ",".join(ids))]:
             gaps.append(f"{label}: the write log does not record what was written ({sent})")
         details = json.loads(decision[2]) if decision else {}
         if (details.get("severity"), details.get("severity_source")) != (severity, source):
             gaps.append(f"{label}: the approval does not record the severity and where it came from")
+        for entry, item in zip(new_rows, original):  # the owner: only what the proposal evidenced, nothing guessed
+            if (entry.get("owner") or "") and not item.get("suggested_owner"):
+                gaps.append(f"{label}: {entry['id']} was given an owner the proposal did not suggest")
+            if not (entry.get("owner") or "") and item.get("suggested_owner"):
+                gaps.append(f"{label}: {entry['id']} lost the owner the proposal suggested")
         applied = next((e for e in events if e[1] == "proposal.applied"), None)
         applied_details = json.loads(applied[2]) if applied else {}
+        if applied is not None and not {"owners", "runtime_copy", "lead_store"} <= set(applied_details):
+            gaps.append(f"{label}: the applied record does not say what happened to the owners, the runtime copy and the lead's table")
         if applied is None or applied[0] != approver or applied_details.get("risk_ids") != ids:
             gaps.append(f"{label}: the audit record does not say who applied which entries")
         if (applied_details.get("severity"), applied_details.get("severity_source")) != (severity, source):
@@ -685,7 +695,7 @@ def _measure_risk_audit() -> MetricResult:
                 ("approved with no severity", None, ("medium", "default")),
                 ("rejected", None, None),
             ):
-                pid = world.propose_risk()
+                pid = world.propose_risk(named_item="PM-014" if label == "approved with a severity" else None)  # PM-014 has an assignee
                 original = world.original_items(pid)
                 before = datetime.now(timezone.utc)
                 if written is None:
@@ -701,7 +711,7 @@ def _measure_risk_audit() -> MetricResult:
         measured=len(gaps), target=0, comparator_name="at_most", passed=at_most(len(gaps), 0),
         detail=(
             "checked approver, timestamp, original payload and what was written (the entries, the severity and where it came from, "
-            "the write log) for: approved with a severity, approved with no severity, rejected"
+            "the owner, the write log, the runtime copy and the lead's table) for: approved with a severity, approved with no severity, rejected"
             + (f"; first gap: {gaps[0]}" if gaps else "")
         ),
     )

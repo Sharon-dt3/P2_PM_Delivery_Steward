@@ -57,9 +57,11 @@ def _safe(text: str) -> str:
 
 def _print_show(csv: CsvRiskLog) -> None:
     risks = csv.list_risks()
-    print(f"{'id':9} {'severity':8} {'status':9} {'item':7} {'opened':10}  title")
+    with_owner = any(r.owner for r in risks)  # the column is shown only when some entry has an owner
+    print(f"{'id':9} {'severity':8} {'status':9} {'item':7} {'opened':10}  " + (f"{'owner':32} " if with_owner else "") + "title")
     for r in risks:
-        print(f"{r.id:9} {r.severity:8} {r.status:9} {(r.related_item_id or '-'):7} {r.opened_at:10}  {r.title}")
+        print(f"{r.id:9} {r.severity:8} {r.status:9} {(r.related_item_id or '-'):7} {r.opened_at:10}  "
+              + (f"{(r.owner or '-'):32} " if with_owner else "") + f"{r.title}")
     print(f"\n{len(risks)} risk(s). Source: {csv._path}")
 
 

@@ -28,7 +28,8 @@ from pm.risklog.remote import RemoteUnavailableError
 
 TABLE = "risk_log"
 _SCHEMA_OK = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
-_COLUMNS = ["id", "title", "description", "severity", "status", "related_item_id", "opened_at"]
+_COLUMNS = ["id", "title", "description", "severity", "status", "related_item_id", "opened_at", "owner"]
+_PLACEHOLDERS = ", ".join(["%s"] * len(_COLUMNS))
 
 
 def _q(name: str) -> str:
@@ -94,8 +95,11 @@ class SupabaseRiskLog(RiskLogStore):
             f'"severity" text NOT NULL CHECK ("severity" IN ({_sql_list(SEVERITIES)})), '
             f'"status" text NOT NULL CHECK ("status" IN ({_sql_list(STATUSES)})), '
             '"related_item_id" text, '
-            '"opened_at" date NOT NULL)'
+            '"opened_at" date NOT NULL, '
+            '"owner" text)'
         )
+        # a table made before the owner column existed gets it, once, additively: nothing is dropped or rewritten
+        cur.execute(f'ALTER TABLE {self._target} ADD COLUMN IF NOT EXISTS "owner" text')
 
     def ensure_table(self) -> None:
         self._run(lambda cur: None)
@@ -104,11 +108,11 @@ class SupabaseRiskLog(RiskLogStore):
     def _risk(row) -> Risk:
         opened = row[6].isoformat() if hasattr(row[6], "isoformat") else str(row[6])
         return Risk(id=row[0], title=row[1], description=row[2] or "", severity=row[3], status=row[4],
-                    related_item_id=row[5], opened_at=opened)
+                    related_item_id=row[5], opened_at=opened, owner=row[7] or None)
 
     @staticmethod
     def _values(risk: Risk) -> tuple:
-        return (risk.id, risk.title, risk.description, risk.severity, risk.status, risk.related_item_id, risk.opened_at)
+        return (risk.id, risk.title, risk.description, risk.severity, risk.status, risk.related_item_id, risk.opened_at, risk.owner)
 
     # --- the store interface ----------------------------------------------------------------------------------
 
@@ -132,7 +136,7 @@ class SupabaseRiskLog(RiskLogStore):
     def create_risk(self, payload: Risk) -> Risk:
         def work(cur):
             cur.execute(
-                f"INSERT INTO {self._target} ({', '.join(_q(c) for c in _COLUMNS)}) VALUES (%s, %s, %s, %s, %s, %s, %s) "
+                f"INSERT INTO {self._target} ({', '.join(_q(c) for c in _COLUMNS)}) VALUES ({_PLACEHOLDERS}) "
                 'ON CONFLICT ("id") DO NOTHING',
                 self._values(payload),
             )
@@ -146,9 +150,9 @@ class SupabaseRiskLog(RiskLogStore):
         def work(cur):
             cur.execute(
                 f'UPDATE {self._target} SET "title" = %s, "description" = %s, "severity" = %s, "status" = %s, '
-                '"related_item_id" = %s, "opened_at" = %s WHERE "id" = %s',
+                '"related_item_id" = %s, "opened_at" = %s, "owner" = %s WHERE "id" = %s',
                 (payload.title, payload.description, payload.severity, payload.status,
-                 payload.related_item_id, payload.opened_at, risk_id),
+                 payload.related_item_id, payload.opened_at, payload.owner, risk_id),
             )
             if cur.rowcount == 0:
                 raise RiskNotFoundError(risk_id)
@@ -163,7 +167,7 @@ class SupabaseRiskLog(RiskLogStore):
             if risks:
                 updates = ", ".join(f"{_q(c)} = EXCLUDED.{_q(c)}" for c in _COLUMNS if c != "id")
                 cur.executemany(
-                    f"INSERT INTO {self._target} ({', '.join(_q(c) for c in _COLUMNS)}) VALUES (%s, %s, %s, %s, %s, %s, %s) "
+                    f"INSERT INTO {self._target} ({', '.join(_q(c) for c in _COLUMNS)}) VALUES ({_PLACEHOLDERS}) "
                     f'ON CONFLICT ("id") DO UPDATE SET {updates}',
                     [self._values(r) for r in risks],
                 )

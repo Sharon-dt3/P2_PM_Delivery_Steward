@@ -598,3 +598,52 @@ def test_a_risk_write_that_lands_is_counted_even_when_the_call_also_raises(monke
     monkeypatch.setattr(pm14_cases, "RISK_ATTEMPTS", [pm14_cases.Attempt("writes then raises", "pending", writes_then_refuses)])
 
     assert pm14_cases._measure_risk_bypasses().measured == 1
+
+
+# -- the owner and the lead's table, in the audit
+
+def test_it_notices_if_an_owner_the_proposal_evidenced_is_not_written(monkeypatch):
+    from pm.approval import risk_apply
+
+    real = risk_apply._batch_entry
+    monkeypatch.setattr(risk_apply, "_batch_entry", lambda *a, **k: real(*a, **k).model_copy(update={"owner": None}))
+
+    assert _risk_gaps() > 0
+
+
+def test_it_notices_if_an_owner_is_invented_for_an_entry_with_none_evidenced(monkeypatch):
+    from pm.approval import risk_apply
+
+    real = risk_apply._batch_entry
+
+    def inventing(*a, **k):
+        entry = real(*a, **k)
+        return entry if entry.owner else entry.model_copy(update={"owner": "Someone (someone)"})
+
+    monkeypatch.setattr(risk_apply, "_batch_entry", inventing)
+
+    assert _risk_gaps() > 0
+
+
+def test_it_notices_if_the_runtime_copy_of_the_risk_log_loses_the_owner(monkeypatch):
+    from pm.risklog.sync import RiskLogSync
+
+    real = RiskLogSync._refresh_runtime
+    monkeypatch.setattr(RiskLogSync, "_refresh_runtime",
+                        lambda self, risks: real(self, [r.model_copy(update={"owner": None}) for r in risks]))
+
+    assert _risk_gaps() > 0
+
+
+def test_it_notices_if_the_applied_record_stops_saying_what_happened_to_the_lead_table(monkeypatch):
+    from pm.approval import service
+
+    real = service.write_audit
+
+    def without_lead(db_path, *, actor, action, proposal_id, details=None):
+        real(db_path, actor=actor, action=action, proposal_id=proposal_id,
+             details={k: v for k, v in (details or {}).items() if k != "lead_store"})
+
+    monkeypatch.setattr(service, "write_audit", without_lead)
+
+    assert _risk_gaps() > 0

@@ -15,6 +15,8 @@ What is decided, and by whom:
   description the proposal's own description, impact and, when promoted, drafted mitigation; for a batch, the line from the channel plus
               the message it came from
   opened_at   the date the evidence is as of (the proposal's own date), not the day someone pressed Approve
+  owner       the owner the proposal SUGGESTED, written only when it was evidenced (the tracker's assignee of the item), as "Name (id)"; none
+              when the proposal had none. Never guessed, never from the model; the evidence goes in the audit record
   severity    NOT the agent's: the proposals carry none (the brief asks for description, impact and suggested owner). The approver chooses it
               when approving. If they do not, `medium` is written and the audit says it was a default, so a lead can see which entries
               nobody rated and can change them in the CSV
@@ -60,6 +62,7 @@ class RiskWrite:
     skipped: tuple[dict, ...]  # items not written, each with the message it came from and why
     severity: str
     severity_source: str  # approver | default
+    owners: tuple[dict, ...] = ()  # for each entry that got an owner: the risk id, the owner and the evidence it rests on
 
 
 def choose_severity(requested: str | None) -> tuple[str, str]:
@@ -80,6 +83,13 @@ def _open_risk_for(existing: list[Risk], item_id: str | None) -> Risk | None:
     return next((r for r in existing if item_id and r.related_item_id == item_id and r.status == "open"), None)
 
 
+def owner_label(person_id: str | None, name: str | None = None) -> str | None:
+    """"Olivia Dupree (olivia.dupree)": the name and the id together, because two people can share a first name. Just the id when no name is known."""
+    if not person_id:
+        return None
+    return f"{name} ({person_id})" if name and name != person_id else person_id
+
+
 def _gap_entry(payload: dict, tracker, number: int, severity: str) -> Risk:
     item_id = payload["item_id"]
     try:
@@ -89,18 +99,22 @@ def _gap_entry(payload: dict, tracker, number: int, severity: str) -> Risk:
     parts = [payload.get("description"), payload.get("impact")]
     if payload.get("mitigation"):
         parts.append(f"Mitigation: {payload['mitigation']}")
+    suggested = payload.get("suggested_owner") or {}
     return Risk(
         id=f"RISK-{number:03d}", title=title, description=" ".join(p.strip() for p in parts if p and p.strip()),
         severity=severity, status="open", related_item_id=item_id, opened_at=payload["local_date"],
+        owner=owner_label(suggested.get("id"), suggested.get("name")),
     )
 
 
-def _batch_entry(item: dict, number: int, severity: str, fallback_date: str) -> Risk:
+def _batch_entry(item: dict, number: int, severity: str, fallback_date: str, names: dict[str, str]) -> Risk:
     ref = item["reference"]
     source = f"From {ref['channel_display_name']} message {ref['message_id']} on {ref['date']}."
+    suggested = item.get("suggested_owner")  # the tracker's assignee of the item, as the batch proposed it
     return Risk(
         id=f"RISK-{number:03d}", title=item["title"], description=f"{item['description']} ({source})", severity=severity,
         status="open", related_item_id=item.get("related_item_id"), opened_at=ref.get("date") or fallback_date,
+        owner=owner_label(suggested, names.get(suggested)),
     )
 
 
@@ -122,6 +136,7 @@ def plan_writes(proposal: Proposal, *, risk_log: RiskLogStore, tracker) -> RiskW
             raise RiskApplyRefused(f"{payload['item_id']} is already in the risk log as {covering.id} (open), so a second entry is not written")
         entries.append(_gap_entry(payload, tracker, number, severity))
     elif proposal.type == CHANNEL_RISK_PROPOSAL_TYPE:
+        names = {a.id: a.display_name for a in tracker.list_assignees()}
         covered = {r.related_item_id for r in existing if r.status == "open" and r.related_item_id}
         for item in payload.get("items", []):
             ref = item["reference"]
@@ -132,7 +147,7 @@ def plan_writes(proposal: Proposal, *, risk_log: RiskLogStore, tracker) -> RiskW
                 continue
             if related:
                 covered.add(related)  # two lines about one item in one batch make one entry
-            entries.append(_batch_entry(item, number + len(entries), severity, payload.get("date", "")))
+            entries.append(_batch_entry(item, number + len(entries), severity, payload.get("date", ""), names))
     else:
         raise RiskApplyRefused(f"{proposal.type} is not a risk-log proposal")
 
@@ -141,7 +156,17 @@ def plan_writes(proposal: Proposal, *, risk_log: RiskLogStore, tracker) -> RiskW
     problems = validate_risks([*existing, *entries])
     if problems:
         raise RiskApplyRefused("the risk log would be invalid: " + "; ".join(problems))
-    return RiskWrite(tuple(entries), tuple(skipped), severity, source)
+    owners = tuple(
+        {"risk_id": e.id, "owner": e.owner, "evidence": _owner_evidence(proposal, e)} for e in entries if e.owner
+    )
+    return RiskWrite(tuple(entries), tuple(skipped), severity, source, owners)
+
+
+def _owner_evidence(proposal: Proposal, entry: Risk) -> str:
+    """Why this owner: what the proposal said it rested on (a gap says so itself; a batch takes the item's assignee in the tracker)."""
+    if proposal.type == RISK_PROPOSAL_TYPE:
+        return (proposal.payload.get("suggested_owner") or {}).get("evidence", "")
+    return f"assignee of {entry.related_item_id} in the tracker"
 
 
 def refresh_runtime_copy(risk_log: RiskLogStore, db_path) -> str:
@@ -155,3 +180,20 @@ def refresh_runtime_copy(risk_log: RiskLogStore, db_path) -> str:
         logger.warning("risk log runtime copy not refreshed: %s: %s", type(exc).__name__, exc)
         return f"stale: {type(exc).__name__}: {exc}"[:200]
     return "refreshed"
+
+
+def sync_lead_store(db_path) -> str:
+    """After the risk log was written, bring the lead-facing table level: the same sync the morning job runs (pm.risklog.hook), so
+    only the repo moved and it is pushed. One word, never raises: `off` (the sync is not switched on), `skipped` (not the configured
+    database), `pushed`, `in_sync`, or why it did not happen (`conflict`, `remote_unreachable`, `error`...). The write already
+    stands in the CSV, the system of record; a lead's table that is not level yet is brought level by the next sync."""
+    from pm.risklog.hook import pull_lead_edits_if_enabled
+
+    try:
+        return pull_lead_edits_if_enabled(db_path)
+    except Exception as exc:  # noqa: BLE001 - the hook itself never raises; this is belt and braces for the write that already happened
+        logger.warning("lead-facing risk log sync failed: %s: %s", type(exc).__name__, exc)
+        return "error"
+
+
+LEAD_LEVEL = frozenset({"pushed", "in_sync"})

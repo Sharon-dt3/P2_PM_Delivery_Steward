@@ -433,13 +433,20 @@ def _execute_risk_write(proposal: Proposal, *, actor: str, store: ProposalStore,
                     details={"error": f"{type(exc).__name__}: {exc}"[:300]})
         return ActionResult(proposal.id, SEND_FAILED, f"{type(exc).__name__}: {exc}")
     runtime = risk_apply.refresh_runtime_copy(risk_log, db_path)
+    lead = risk_apply.sync_lead_store(db_path)  # the lead's table, when the sync is on; the CSV write above already stands either way
     write_audit(
         db_path, actor=actor, action="proposal.applied", proposal_id=proposal.id,
         details={"target": "risk_log", "risk_ids": ids, "severity": plan.severity, "severity_source": plan.severity_source,
-                 "skipped": list(plan.skipped), "runtime_copy": runtime},
+                 "skipped": list(plan.skipped), "owners": list(plan.owners), "runtime_copy": runtime, "lead_store": lead},
     )
     skipped = f" ({len(plan.skipped)} already covered, not written)" if plan.skipped else ""
-    return ActionResult(proposal.id, APPLIED_OUTCOME, f"wrote {', '.join(ids)} to the risk log{skipped}")
+    if lead == "off" or lead == "skipped":
+        where = ""
+    elif lead in risk_apply.LEAD_LEVEL:
+        where = "; the lead's table is up to date"
+    else:
+        where = f"; the lead's table is NOT up to date yet ({lead}): the next sync brings it level"
+    return ActionResult(proposal.id, APPLIED_OUTCOME, f"wrote {', '.join(ids)} to the risk log{skipped}{where}")
 
 
 def _execute(

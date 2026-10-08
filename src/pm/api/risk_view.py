@@ -44,6 +44,8 @@ def explain_risk(risk, item, owner_name: str | None, pending_titles: list[str]) 
         parts.append(f"It names {risk.related_item_id}, which is not in the tracker.")
     else:
         parts.append("It is not tied to a tracker item.")
+    if getattr(risk, "owner", None):
+        parts.append(f"Its owner is {risk.owner}.")
     parts.append(f"Opened {risk.opened_at}.")
     if pending_titles:
         parts.append("Waiting for a decision: " + "; ".join(pending_titles) + ".")

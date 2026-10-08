@@ -45,10 +45,10 @@ rejected one is not re-proposed, a blocker that clears and is blocked again is a
 Risk proposals show on the dashboard, in `approve.py list` and as cards in Teams, each with Approve and Reject.
 **Approving one writes it to the risk log** (`risk_log/risks.csv`, and the runtime copy the detector reads, so the same blocker is not
 proposed again): the next RISK id, the tracker item's title, the proposal's description and impact (and drafted mitigation when promoted),
-dated as of the evidence. The proposal carries no severity, so the approver picks one (`--severity` on the command line, a picker on the
+dated as of the evidence, with the suggested owner (the tracker's assignee, as "Name (id)") when there is one. The proposal carries no severity, so the approver picks one (`--severity` on the command line, a picker on the
 dashboard and the card); if nobody does, `medium` is written and the audit records it as a default. Approving is refused up front (and
 the proposal stays pending) for a stranger, for an edited approval, and for a blocker that already has an open risk. Auto-approve never
-takes one. The rules are enforced in the service, not hidden in the UI: `pm/approval/risk_apply.py`, `tests/unit/test_risk_approval.py`.
+takes one. With `PM_RISK_LOG_SYNC=1` the entry is pushed to the lead's table at once and the approval says whether it got there (`risk_log/README.md`). The rules are enforced in the service, not hidden in the UI: `pm/approval/risk_apply.py`, `tests/unit/test_risk_approval.py`.
 
 ## Rejection memory (PM-17)
 

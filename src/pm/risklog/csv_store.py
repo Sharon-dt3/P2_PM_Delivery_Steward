@@ -34,6 +34,7 @@ def live_risk_log_path() -> Path:
 
 DEFAULT_CSV_PATH = live_risk_log_path()  # as resolved at import; code that must follow the setting calls live_risk_log_path()
 COLUMNS = ["id", "title", "description", "severity", "status", "related_item_id", "opened_at"]
+OPTIONAL_COLUMNS = ["owner"]  # present in a file only when some entry has one; a file without it is just as valid
 SEVERITIES = ("low", "medium", "high")
 STATUSES = ("open", "mitigated", "closed")
 
@@ -85,10 +86,10 @@ def read_risks(path: str | Path = DEFAULT_CSV_PATH) -> list[Risk]:
     text = path.read_bytes().decode("utf-8-sig")  # Excel saves UTF-8 CSV with a byte order mark
     reader = csv.DictReader(io.StringIO(text, newline=""))
     header = [h.strip() for h in (reader.fieldnames or [])]
-    missing, extra = [c for c in COLUMNS if c not in header], [h for h in header if h not in COLUMNS]
+    missing, extra = [c for c in COLUMNS if c not in header], [h for h in header if h not in COLUMNS + OPTIONAL_COLUMNS]
     if missing or extra:
         raise RiskLogDataError(
-            "the columns must be exactly " + ", ".join(COLUMNS)
+            "the columns must be exactly " + ", ".join(COLUMNS) + " (and optionally " + ", ".join(OPTIONAL_COLUMNS) + ")"
             + (f"; missing: {', '.join(missing)}" if missing else "")
             + (f"; unexpected: {', '.join(extra)}" if extra else "")
         )
@@ -98,7 +99,8 @@ def read_risks(path: str | Path = DEFAULT_CSV_PATH) -> list[Risk]:
         if not any(cells.values()):
             continue  # a blank line, as Excel leaves at the end of a file
         risks.append(
-            Risk(**{c: cells[c] for c in COLUMNS if c != "related_item_id"}, related_item_id=cells["related_item_id"] or None)
+            Risk(**{c: cells[c] for c in COLUMNS if c != "related_item_id"}, related_item_id=cells["related_item_id"] or None,
+                 owner=cells.get("owner") or None)
         )
     problems = validate_risks(risks)
     if problems:
@@ -115,10 +117,11 @@ def write_risks(path: str | Path, risks: list[Risk]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     buffer = io.StringIO(newline="")
     writer = csv.writer(buffer, lineterminator="\n")
-    writer.writerow(COLUMNS)
+    with_owner = any(risk.owner for risk in risks)  # the column appears only when it has something in it: a log with no owners is byte-for-byte as before
+    writer.writerow([*COLUMNS, *(OPTIONAL_COLUMNS if with_owner else [])])
     for risk in sorted(risks, key=lambda r: r.id):
         writer.writerow([risk.id, risk.title, risk.description, risk.severity, risk.status,
-                         risk.related_item_id or "", risk.opened_at])
+                         risk.related_item_id or "", risk.opened_at, *([risk.owner or ""] if with_owner else [])])
     temporary = path.with_name(path.name + ".tmp")
     temporary.write_bytes(buffer.getvalue().encode("utf-8"))
     os.replace(temporary, path)

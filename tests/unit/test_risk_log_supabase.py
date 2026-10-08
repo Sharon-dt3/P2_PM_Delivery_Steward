@@ -101,8 +101,18 @@ def test_the_table_has_real_columns_and_constraints_the_lead_cannot_break():
     assert '"id" text PRIMARY KEY' in ddl and '"title" text NOT NULL' in ddl
     assert "CHECK (\"severity\" IN ('low', 'medium', 'high'))" in ddl
     assert "CHECK (\"status\" IN ('open', 'mitigated', 'closed'))" in ddl
-    assert '"opened_at" date NOT NULL' in ddl and '"related_item_id" text' in ddl
+    assert '"opened_at" date NOT NULL' in ddl and '"related_item_id" text' in ddl and '"owner" text' in ddl
     assert conn.sql()[0] == 'CREATE SCHEMA IF NOT EXISTS "p2"'
+
+
+def test_a_table_made_before_the_owner_column_gets_it_additively_and_nothing_is_dropped():
+    conn = FakeConn()
+
+    _store(conn).ensure_table()
+
+    alter = [s for s in conn.sql() if s.startswith("ALTER TABLE")]
+    assert alter == [f'ALTER TABLE "p2"."{TABLE}" ADD COLUMN IF NOT EXISTS "owner" text']
+    assert not [s for s in conn.sql() if "DROP" in s.upper() or "TRUNCATE" in s.upper()]
 
 
 def test_it_only_ever_touches_its_own_schema_and_never_the_shared_one():
@@ -119,18 +129,19 @@ def test_it_only_ever_touches_its_own_schema_and_never_the_shared_one():
 
 
 def test_list_returns_risks_with_dates_as_iso_text_in_id_order():
-    conn = FakeConn(rows=[("RISK-001", "T", "D", "medium", "open", "PM-023", datetime.date(2026, 9, 10)),
-                          ("RISK-003", "T3", "", "low", "mitigated", None, datetime.date(2026, 8, 20))])
+    conn = FakeConn(rows=[("RISK-001", "T", "D", "medium", "open", "PM-023", datetime.date(2026, 9, 10), "Wei Chen (wei.chen)"),
+                          ("RISK-003", "T3", "", "low", "mitigated", None, datetime.date(2026, 8, 20), None)])
 
     risks = _store(conn).list_risks()
 
     assert [r.id for r in risks] == ["RISK-001", "RISK-003"]
     assert risks[0].opened_at == "2026-09-10" and risks[1].related_item_id is None and risks[1].description == ""
+    assert risks[0].owner == "Wei Chen (wei.chen)" and risks[1].owner is None
     assert any(s.startswith('SELECT') and f'"p2"."{TABLE}"' in s and "ORDER BY" in s for s in conn.sql())
 
 
 def test_get_risk_and_the_not_found_error():
-    found = _store(FakeConn(rows=[("RISK-001", "T", "D", "medium", "open", "PM-023", datetime.date(2026, 9, 10))]))
+    found = _store(FakeConn(rows=[("RISK-001", "T", "D", "medium", "open", "PM-023", datetime.date(2026, 9, 10), None)]))
     assert found.get_risk("RISK-001").id == "RISK-001"
 
     with pytest.raises(RiskNotFoundError):
@@ -142,10 +153,10 @@ def test_get_risk_and_the_not_found_error():
 
 def test_create_inserts_with_bound_values_and_refuses_a_duplicate():
     conn = FakeConn(rowcount=1)
-    _store(conn).create_risk(_risk(related_item_id="PM-001"))
+    _store(conn).create_risk(_risk(related_item_id="PM-001", owner="Olivia Dupree (olivia.dupree)"))
 
     insert, params = next((s, p) for s, p in conn.statements if s.startswith(f'INSERT INTO "p2"."{TABLE}"'))
-    assert "DO NOTHING" in insert and params == ("RISK-010", "T", "D", "low", "open", "PM-001", "2026-09-20")
+    assert "DO NOTHING" in insert and params == ("RISK-010", "T", "D", "low", "open", "PM-001", "2026-09-20", "Olivia Dupree (olivia.dupree)")
 
     with pytest.raises(DuplicateRiskError):
         _store(FakeConn(rowcount=0)).create_risk(_risk())  # DO NOTHING inserted no row: it already existed

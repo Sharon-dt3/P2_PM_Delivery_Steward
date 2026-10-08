@@ -416,8 +416,8 @@ def build_seed(conn: sqlite3.Connection, risks: list[dict] | None = None) -> Non
         COMMITMENTS,
     )
     conn.executemany(
-        "INSERT INTO risks (id, title, description, severity, status, related_item_id, opened_at) VALUES (:id, :title, :description, :severity, :status, :related_item_id, :opened_at)",
-        [risk.model_dump() for risk in read_risks(live_risk_log_path())] if risks is None else risks,
+        "INSERT INTO risks (id, title, description, severity, status, related_item_id, opened_at, owner) VALUES (:id, :title, :description, :severity, :status, :related_item_id, :opened_at, :owner)",
+        [{"owner": None, **risk} for risk in ([r.model_dump() for r in read_risks(live_risk_log_path())] if risks is None else risks)],
     )
     conn.commit()
 

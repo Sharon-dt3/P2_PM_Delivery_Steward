@@ -117,9 +117,9 @@ def test_columns_may_be_in_any_order_but_must_all_be_there(tmp_path):
 
 def test_an_extra_column_is_refused_not_silently_dropped(tmp_path):
     path = tmp_path / "risks.csv"
-    path.write_text(",".join(COLUMNS) + ",owner\nRISK-010,T,D,low,open,,2026-09-20,sam\n")
+    path.write_text(",".join(COLUMNS) + ",assignee\nRISK-010,T,D,low,open,,2026-09-20,sam\n")
 
-    with pytest.raises(RiskLogDataError, match="owner"):
+    with pytest.raises(RiskLogDataError, match="assignee"):
         read_risks(path)
 
 
@@ -238,3 +238,34 @@ def test_replace_all_swaps_the_whole_log(store):
     store.replace_all([SEEDED[1]])
 
     assert store.list_risks() == [SEEDED[1]]
+
+
+# --- the optional owner column ------------------------------------------------------------------------------------
+
+
+def test_a_log_with_no_owners_is_written_exactly_as_before_the_column_existed(tmp_path):
+    path = tmp_path / "risks.csv"
+
+    write_risks(path, SEEDED)
+
+    assert path.read_text(encoding="utf-8") == SEED_RISK_LOG_PATH.read_text(encoding="utf-8")  # byte for byte: no empty owner column appears
+
+
+def test_an_owner_is_written_in_its_own_column_and_read_back(tmp_path):
+    path = tmp_path / "risks.csv"
+    with_owner = [*SEEDED, _risk(owner="Olivia Dupree (olivia.dupree)")]
+
+    write_risks(path, with_owner)
+
+    lines = path.read_text(encoding="utf-8").splitlines()
+    assert lines[0] == ",".join(COLUMNS) + ",owner" and lines[-1].endswith(",Olivia Dupree (olivia.dupree)")
+    assert read_risks(path) == with_owner and read_risks(path)[0].owner is None
+
+
+def test_a_file_the_lead_saved_with_an_owner_column_and_blank_owners_reads_with_none(tmp_path):
+    path = tmp_path / "risks.csv"
+    path.write_text(",".join(COLUMNS) + ",owner\nRISK-010,T,D,low,open,,2026-09-20,\nRISK-011,T,D,low,open,,2026-09-20,Sam\n")
+
+    first, second = read_risks(path)
+
+    assert first.owner is None and second.owner == "Sam"

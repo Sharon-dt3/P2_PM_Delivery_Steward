@@ -32,7 +32,7 @@ from typing import Iterator
 
 from pydantic import BaseModel
 
-from pm.storage.db import DEFAULT_DB_PATH, get_connection
+from pm.storage.db import DEFAULT_DB_PATH, get_connection, run_migrations
 
 
 class Risk(BaseModel):
@@ -43,6 +43,7 @@ class Risk(BaseModel):
     status: str  # open | mitigated | closed
     related_item_id: str | None = None
     opened_at: str
+    owner: str | None = None  # who has it, readable ("Olivia Dupree (olivia.dupree)"); only where evidenced, else None
 
 
 class RiskNotFoundError(Exception):
@@ -86,6 +87,7 @@ def _row_to_risk(row: sqlite3.Row) -> Risk:
         status=row["status"],
         related_item_id=row["related_item_id"],
         opened_at=row["opened_at"],
+        owner=row["owner"] if "owner" in row.keys() else None,  # noqa: SIM118 - sqlite3.Row's `in` tests values, not column names; a database from before 0006 has no such column
     )
 
 
@@ -118,14 +120,15 @@ class RiskLogMock(RiskLogStore):
         return _row_to_risk(row)
 
     def create_risk(self, payload: Risk) -> Risk:
+        run_migrations(self._db_path)  # idempotent: a database older than the owner column gets it before it is written to
         with self._conn() as conn:
             exists = conn.execute("SELECT 1 FROM risks WHERE id = ?", (payload.id,)).fetchone()
             if exists is not None:
                 raise DuplicateRiskError(payload.id)
             conn.execute(
                 """
-                INSERT INTO risks (id, title, description, severity, status, related_item_id, opened_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO risks (id, title, description, severity, status, related_item_id, opened_at, owner)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     payload.id,
@@ -135,19 +138,21 @@ class RiskLogMock(RiskLogStore):
                     payload.status,
                     payload.related_item_id,
                     payload.opened_at,
+                    payload.owner,
                 ),
             )
             conn.commit()
         return payload
 
     def update_risk(self, risk_id: str, payload: Risk) -> Risk:
+        run_migrations(self._db_path)
         with self._conn() as conn:
             exists = conn.execute("SELECT 1 FROM risks WHERE id = ?", (risk_id,)).fetchone()
             if exists is None:
                 raise RiskNotFoundError(risk_id)
             conn.execute(
                 """
-                UPDATE risks SET title = ?, description = ?, severity = ?, status = ?, related_item_id = ?, opened_at = ?
+                UPDATE risks SET title = ?, description = ?, severity = ?, status = ?, related_item_id = ?, opened_at = ?, owner = ?
                 WHERE id = ?
                 """,
                 (
@@ -157,6 +162,7 @@ class RiskLogMock(RiskLogStore):
                     payload.status,
                     payload.related_item_id,
                     payload.opened_at,
+                    payload.owner,
                     risk_id,
                 ),
             )

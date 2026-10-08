@@ -12,7 +12,14 @@ The delivery risk log lives in three places that are kept in sync.
 
 `id` (RISK-001), `title`, `description`, `severity` (low | medium | high), `status`
 (open | mitigated | closed), `related_item_id` (a tracker item such as PM-023, or empty),
-`opened_at` (a date like 2026-09-10).
+`opened_at` (a date like 2026-09-10), and optionally `owner` (who has it, as "Name (id)", e.g.
+`Olivia Dupree (olivia.dupree)`).
+
+`owner` is only ever set where it is evidenced: when a person approves a risk proposal, the owner
+the proposal suggested (the tracker's assignee of the item) is written onto the entry, and the audit
+keeps the evidence. An entry with no evidenced owner has none, and a log with no owners has no
+`owner` column at all, so the file looks exactly as it always did until the first one appears. The
+lead can type or change an owner in the table or the CSV like any other field.
 
 Only **open** risks appear as blockers in the brief, so closing or mitigating one removes it
 from tomorrow's brief.
@@ -40,6 +47,16 @@ If the lead's table cannot be reached, nothing changes and the repo copy keeps w
 
 Set `PM_RISK_LOG_SYNC=1` and each morning job first pulls the lead's edits, so the brief
 reflects them. After editing the CSV by hand, run `sync` (or `push`) and commit the file.
+
+**Approving a risk proposal** (in Teams, the dashboard or `approve.py`) writes the entry to the CSV
+and the runtime copy, and, with `PM_RISK_LOG_SYNC=1`, pushes it to the lead's table straight away
+(the same sync, so only the repo moved). The approval says which happened: "the lead's table is up
+to date", or "NOT up to date yet (remote_unreachable | conflict | ...)". The write stands either way,
+in the CSV; if the table could not be updated, nothing of the lead's is overwritten and the next
+sync (the morning job's) brings it level. A refused approval never touches the lead's table.
+
+The first time the sync touches a lead's table made before `owner` existed, it adds the column
+(`ADD COLUMN IF NOT EXISTS`: additive, nothing dropped or rewritten).
 
 ## Settings
 

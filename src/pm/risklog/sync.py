@@ -30,7 +30,7 @@ from pathlib import Path
 from pm.adapters.risk_log import Risk
 from pm.risklog.csv_store import CsvRiskLog, RiskLogDataError, validate_risks
 from pm.risklog.remote import RemoteRiskLog, RemoteUnavailableError
-from pm.storage.db import get_connection
+from pm.storage.db import get_connection, run_migrations
 
 IN_SYNC = "in_sync"
 PUSHED = "pushed"
@@ -63,7 +63,12 @@ class Comparison:
 
 
 def fingerprint(risks: list[Risk]) -> str:
-    canonical = json.dumps([r.model_dump() for r in sorted(risks, key=lambda r: r.id)], sort_keys=True)
+    # An owner that is not there is left out, so a log with no owners fingerprints exactly as it did before the field existed
+    # and the baseline a sync has already agreed on is still valid.
+    canonical = json.dumps(
+        [{k: v for k, v in r.model_dump().items() if not (k == "owner" and v is None)} for r in sorted(risks, key=lambda r: r.id)],
+        sort_keys=True,
+    )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
@@ -114,15 +119,16 @@ class RiskLogSync:
 
     def _refresh_runtime(self, risks: list[Risk]) -> None:
         """Make the database's risks table exactly the repo log (replace, never append)."""
+        run_migrations(self._db)  # idempotent: a database older than the owner column gets it first
         if self.runtime_risks() == sorted(risks, key=lambda r: r.id):
             return
         conn = get_connection(self._db)
         try:
             conn.execute("DELETE FROM risks")
             conn.executemany(
-                "INSERT INTO risks (id, title, description, severity, status, related_item_id, opened_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                [(r.id, r.title, r.description, r.severity, r.status, r.related_item_id, r.opened_at) for r in risks],
+                "INSERT INTO risks (id, title, description, severity, status, related_item_id, opened_at, owner) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                [(r.id, r.title, r.description, r.severity, r.status, r.related_item_id, r.opened_at, r.owner) for r in risks],
             )
             conn.commit()
         finally:
