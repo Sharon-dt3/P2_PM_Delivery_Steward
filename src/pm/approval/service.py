@@ -45,6 +45,7 @@ from pm.approval.proposals import (
     ESCALATION_PROPOSAL_TYPE,
     NUDGE_PROPOSAL_TYPE,
 )
+from pm.channel.batches import CHANNEL_RISK_PROPOSAL_TYPE, CHANNEL_TRACKER_PROPOSAL_TYPE
 from pm.commitments import delivery
 from pm.mirror.hook import mirrored
 from pm.reporting.morning_brief import _AS_RECORDED
@@ -55,6 +56,7 @@ from pm.storage.db import DEFAULT_DB_PATH
 # reviewed here -- shown, rejected on the record -- but approving one would have
 # nothing to execute, so it is refused up front rather than left half-approved.
 EXECUTABLE_TYPES = frozenset({BRIEF_PROPOSAL_TYPE, EOD_PROPOSAL_TYPE}) | DIRECT_MESSAGE_TYPES
+CHANNEL_BATCH_TYPES = frozenset({CHANNEL_TRACKER_PROPOSAL_TYPE, CHANNEL_RISK_PROPOSAL_TYPE})  # PM-26: proposals only; approving writes nothing
 
 SENT = "sent"
 REJECTED_OUTCOME = "rejected"
@@ -124,6 +126,34 @@ def _normalise(text: str) -> str:
     return text.replace("\r\n", "\n").strip()
 
 
+def _batch_line(item: dict) -> str:
+    """One item of a batch from P1's outcome record, as a person reads it: what it would do, and the message that justifies it."""
+    ref = item["reference"]
+    if item["kind"] == "comment":
+        what = f"Comment on {item['item_id']}: {item['source_text']}"
+    elif item["kind"] == "create":
+        what = f"New item (blocked, nobody assigned): {item['title']}"
+    else:
+        owner = f" (suggested owner {item['suggested_owner']})" if item.get("suggested_owner") else ""
+        what = f"New risk entry for {item.get('related_item_id') or 'no item'}{owner}: {item['title']}"
+    line = f"- {what}\n    from {ref['channel_display_name']} message {ref['message_id']} on {ref['date']}"
+    if item.get("changed_since"):
+        line += f"\n    replaces an earlier wording ({item['changed_since']['earlier_status']}): {item['changed_since']['earlier_text']}"
+    return line
+
+
+def _summarize_batch(proposal: Proposal) -> PendingApproval:
+    payload = proposal.payload
+    items = payload.get("items", [])
+    kind = "Tracker changes" if proposal.type == CHANNEL_TRACKER_PROPOSAL_TYPE else "Risk-log entries"
+    return PendingApproval(
+        proposal_id=proposal.id, type=proposal.type, target_channel=payload.get("channel_id", "?"), local_date=payload.get("date", "?"),
+        created_at=proposal.created_at,
+        summary=f"{kind} from {payload.get('channel_display_name', '?')} ({payload.get('date', '?')}): {len(items)} item{'' if len(items) == 1 else 's'}",
+        content="\n".join(_batch_line(item) for item in items),
+    )
+
+
 def _summarize(proposal: Proposal) -> PendingApproval:
     payload = proposal.payload
     target = payload.get("target_channel", "?")
@@ -135,6 +165,8 @@ def _summarize(proposal: Proposal) -> PendingApproval:
         summary = f"Reminder to {payload.get('recipient_name') or target} about commitment #{payload.get('commitment_id')}"
     if proposal.type == ESCALATION_PROPOSAL_TYPE:
         summary = f"Escalation to {payload.get('recipient_name') or target} about commitment #{payload.get('commitment_id')}"
+    if proposal.type in CHANNEL_BATCH_TYPES:
+        return _summarize_batch(proposal)
     if proposal.type not in EXECUTABLE_TYPES:
         summary = f"Proposed risk log entry for {payload.get('item_id', '?')} ({payload.get('blocker_ref', '?')})"
     return PendingApproval(

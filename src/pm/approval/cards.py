@@ -94,7 +94,7 @@ def pending_proposal_only_card(pending: PendingApproval) -> dict:
         [
             _text(pending.summary, size="Large", weight="Bolder"),
             _text(pending.content, fontType="Monospace"),
-            _text("Applying an approved risk entry is not built yet: it can only be rejected.", isSubtle=True),
+            _text("Applying an approved proposal of this kind is not built yet: it can only be rejected.", isSubtle=True),
         ],
         [
             {

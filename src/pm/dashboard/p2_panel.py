@@ -78,8 +78,8 @@ def _pending_proposal_only(item, policy, acting_as, db_path) -> None:
         created = item.created_at.split(".")[0].replace("T", " ") + " UTC"
         st.caption(f"proposal {item.proposal_id[:8]}… · proposed {created} · {item.type}")
         st.caption(
-            "Applying an approved risk entry to the risk log is not built yet, so there is no Approve here: "
-            "you can read it and reject it. Nothing is written to the risk log."
+            "Applying an approved proposal of this kind (a risk-log entry, or a batch from a channel record) is not built yet, so there is no Approve here: "
+            "you can read it and reject it. Nothing is written to the risk log or the tracker."
         )
         with st.expander("What the agent proposed", expanded=True):
             st.text(item.content)
