@@ -51,6 +51,7 @@ from pm.approval.proposals import (
     EOD_PROPOSAL_TYPE,
     ESCALATION_PROPOSAL_TYPE,
     NUDGE_PROPOSAL_TYPE,
+    WEEKLY_REPORT_PROPOSAL_TYPE,
 )
 from pm.channel.batches import CHANNEL_RISK_PROPOSAL_TYPE, CHANNEL_TRACKER_PROPOSAL_TYPE
 from pm.commitments import delivery
@@ -184,6 +185,8 @@ def _summarize(proposal: Proposal) -> PendingApproval:
         summary = f"Escalation to {payload.get('recipient_name') or target} about commitment #{payload.get('commitment_id')}"
     if proposal.type in CHANNEL_BATCH_TYPES:
         return _summarize_batch(proposal)
+    if proposal.type == WEEKLY_REPORT_PROPOSAL_TYPE:
+        summary = f"Weekly status report, week ending {date} (a draft: it is never sent)"
     if proposal.type == RISK_PROPOSAL_TYPE:
         summary = f"Proposed risk log entry for {payload.get('item_id', '?')} ({payload.get('blocker_ref', '?')})"
     return PendingApproval(

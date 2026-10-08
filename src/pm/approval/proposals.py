@@ -25,6 +25,7 @@ from pm.storage.db import DEFAULT_DB_PATH
 
 BRIEF_PROPOSAL_TYPE = "morning_brief_publish"
 EOD_PROPOSAL_TYPE = "end_of_day_summary_publish"
+WEEKLY_REPORT_PROPOSAL_TYPE = "weekly_status_report"  # a draft for a person to read: nothing sends it, so it can be reviewed and rejected, never approved
 NUDGE_PROPOSAL_TYPE = "commitment_nudge"  # a reminder, sent as a direct message to the person who made the commitment
 ESCALATION_PROPOSAL_TYPE = "commitment_escalation"  # an evidence bundle, sent as a direct message to the lead
 DIRECT_MESSAGE_TYPES = frozenset({NUDGE_PROPOSAL_TYPE, ESCALATION_PROPOSAL_TYPE})
@@ -134,5 +135,29 @@ def propose_morning_brief(
     write_audit(
         db_path, actor=AGENT, action="proposal.created", proposal_id=proposal.id,
         details={"type": BRIEF_PROPOSAL_TYPE, "target": target, "local_date": local_date},
+    )
+    return proposal, True
+
+
+def propose_weekly_report(
+    *, text: str, figures: list[dict], snapshots: dict[str, str], week_ending: str, db_path: str | Path = DEFAULT_DB_PATH,
+) -> tuple[Proposal, bool]:
+    """The weekly status report as a proposal: the text, the figures it states and the stored snapshots they were computed from. One per week
+    ending. It is never sent: the type has no executor, so the gate offers it for review and rejection only."""
+    key = f"{WEEKLY_REPORT_PROPOSAL_TYPE}:{week_ending}"
+    store = ProposalStore(db_path)
+    existing = store.get_by_idempotency_key(key)
+    if existing is not None:
+        return existing, False
+    proposal = store.create(
+        type=WEEKLY_REPORT_PROPOSAL_TYPE,
+        payload={"local_date": week_ending, "content": text, "figures": figures, "snapshots": snapshots, "target_channel": "(not sent)"},
+        original_model_output={"content": text, "figures": figures},
+        source_refs=sorted(snapshots.values()),
+        idempotency_key=key,
+    )
+    write_audit(
+        db_path, actor=AGENT, action="proposal.created", proposal_id=proposal.id,
+        details={"type": WEEKLY_REPORT_PROPOSAL_TYPE, "week_ending": week_ending, "snapshots": snapshots},
     )
     return proposal, True
