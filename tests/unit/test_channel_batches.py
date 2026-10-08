@@ -328,3 +328,40 @@ def _counts(db) -> dict:
         "proposals": conn.execute("SELECT COUNT(*) FROM proposals").fetchone()[0],
         "commitments": conn.execute("SELECT COUNT(*) FROM commitments").fetchone()[0],
     }
+
+
+# --- titles read as sentences ---------------------------------------------------------------------------------------------------------------
+
+REAL_LINES = {
+    "The author attempted to hit the staging mirror for an end-to-end check and was rejected, which they believe is due to the service key having "
+    "been rotated sometime last week without notification.": "The author attempted to hit the staging mirror for an end-to-end check and was rejected",
+    "The adapter on the copilot studio side requires a payload shape that has not been documented, and the author has asked twice without receiving "
+    "a reply.": "The adapter on the copilot studio side requires a payload shape that has not been documented",
+    "The author is seeing a recurring 403 Forbidden error — code=Forbidden, message=\"Insufficient privileges to complete the operation\" — at "
+    "ChannelMessage.Send, which started around 11 despite the same token having worked at 9.": "The author is seeing a recurring 403 Forbidden error",
+    "The full unit suite passes except for one test that fails only when the full suite runs together but passes in isolation, which the author "
+    "attributes to environment leaking in from somewhere.": "The full unit suite passes except for one test that fails only when the full suite runs together but passes in isolation",
+}
+
+
+@pytest.mark.parametrize(("line", "title"), list(REAL_LINES.items()))
+def test_a_long_line_becomes_a_title_that_ends_where_the_sentence_or_a_clause_does(line, title):
+    from pm.channel.batches import _title
+
+    assert _title(line) == title
+    assert "..." not in _title(line) and "…" not in _title(line) and title in line  # nothing added, nothing reworded
+
+
+def test_a_short_line_is_its_own_title_and_a_long_one_with_no_break_is_cut_at_a_word():
+    from pm.channel.batches import _TITLE_CHARS, _title
+
+    assert _title("Short one.") == "Short one."
+    unbroken = " ".join(["word"] * 60)
+    cut = _title(unbroken)
+    assert cut.endswith("word…") and len(cut) <= _TITLE_CHARS and unbroken.startswith(cut[:-1])
+
+
+def test_a_first_sentence_that_fits_is_the_title_without_its_full_stop():
+    from pm.channel.batches import _title
+
+    assert _title("The deploy to staging failed on the migration step. " + "Then more words follow. " * 6) == "The deploy to staging failed on the migration step"

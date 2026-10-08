@@ -103,7 +103,9 @@ def test_a_clipped_title_is_shown_with_the_whole_line_so_the_approver_reads_what
 
     for proposal_id in (result.tracker.proposal_id, result.risk.proposal_id):
         content = pending[proposal_id].content
-        assert "..." in content.splitlines()[0] and f"the whole line: {long_line}" in content  # clipped title, then everything that was said
+        first = content.splitlines()[0]
+        assert first.endswith("requires a payload shape that has not been documented") and "..." not in first  # a clean sentence, not cut mid-word
+        assert f"the whole line: {long_line}" in content  # then everything that was said
 
 
 def test_the_risk_batch_card_offers_a_severity_to_pick_approve_and_reject(batches):

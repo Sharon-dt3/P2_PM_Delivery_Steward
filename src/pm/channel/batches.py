@@ -49,7 +49,7 @@ CHANNEL_TRACKER_PROPOSAL_TYPE = "channel_tracker_changes"
 CHANNEL_RISK_PROPOSAL_TYPE = "channel_risk_entries"
 TRACKER_SET, RISK_SET = "tracker", "risk"
 _ITEM_ID = re.compile(r"\bPM-\d+\b")
-_TITLE_CHARS = 100
+_TITLE_CHARS = 120
 
 
 # --- what the tracker and the risk log say right now ---------------------------------------------------------------------------
@@ -113,9 +113,27 @@ def _words(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+_SENTENCE_END = re.compile(r"[.!?](?=\s|$)")
+_ASIDE_BREAK = re.compile(r"\s+[—–-]\s+|\s+\(")  # a dash or bracket opens an aside: the sentence is complete before it
+_CLAUSE_BREAK = re.compile(r"[,;:]\s+")
+_MIN_TITLE_CHARS = 30
+
+
 def _title(text: str) -> str:
+    """The line as a short title that reads as a sentence: the first sentence if it fits, else the line up to its first aside (dash or bracket), else up to its
+    last clause break that fits (comma, semicolon or colon). Nothing is added or reworded; the approver is shown the whole line beside it. Only a line with no
+    break to cut at is cut at a word, and then it ends in an ellipsis."""
     text = _words(text)
-    return text if len(text) <= _TITLE_CHARS else text[: _TITLE_CHARS - 3].rstrip() + "..."
+    if len(text) <= _TITLE_CHARS:
+        return text
+    first = next((text[: m.end()] for m in _SENTENCE_END.finditer(text)), text)
+    if len(first) <= _TITLE_CHARS:
+        return first.rstrip(".")
+    for pattern, pick in ((_ASIDE_BREAK, 0), (_CLAUSE_BREAK, -1)):  # the first aside, else the last clause that fits
+        cuts = [m.start() for m in pattern.finditer(first) if _MIN_TITLE_CHARS <= m.start() <= _TITLE_CHARS]
+        if cuts:
+            return first[: cuts[pick]].rstrip(" ,;:—–-")
+    return first[: _TITLE_CHARS - 1].rsplit(" ", 1)[0].rstrip(" ,;:—–-") + "…"
 
 
 def _named_items(line: Evidence) -> list[str]:
