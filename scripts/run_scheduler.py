@@ -27,11 +27,11 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time as _time
 from datetime import datetime, timezone
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _P1_REPO_ROOT = _REPO_ROOT.parent / "P3_Agents"
@@ -42,20 +42,16 @@ for _path in (_REPO_ROOT / "src", _P1_REPO_ROOT / "src", _REPO_ROOT / "packages"
 from pm.approval.settings import describe_settings
 from pm.jobs.end_of_day_job import run_end_of_day_job
 from pm.jobs.morning_brief_job import run_morning_brief_job
+from pm.scheduling.channel_briefs import add_channel_brief_jobs
+from pm.scheduling.clock import (
+    parse_at,
+)
 from pm.scheduling.config import (
     ProjectScheduleConfig,
     default_project_schedule_config,
 )
 from pm.scheduling.scheduler import build_scheduler
 from pm.storage.db import DEFAULT_DB_PATH
-
-
-def parse_at(text: str, tz_name: str) -> datetime:
-    """A wall-clock time like 2026-09-16T08:00, read in the project's timezone."""
-    parsed = datetime.fromisoformat(text)
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=ZoneInfo(tz_name))
-    return parsed.astimezone(timezone.utc)
 
 
 class _ScriptedBoth:
@@ -91,6 +87,20 @@ def _print_schedule(scheduler, config: ProjectScheduleConfig) -> None:
         print(f"  {line}")
 
 
+def _print_channel_briefs(scheduler, entries) -> None:
+    """The real-channel briefs: each channel's own timezone, and the next time each job fires."""
+    now = datetime.now(timezone.utc)
+    for channel_config, name in entries:
+        print(f"Channel {name} ({channel_config.timezone}); working days: {', '.join(channel_config.working_days)}")
+        for kind, at in (("morning", channel_config.morning_brief_time), ("evening", channel_config.end_of_day_time)):
+            job = scheduler.get_job(f"pm:channel_{kind}:{channel_config.channel_id}")
+            nxt = job.trigger.get_next_fire_time(None, now) if job else None
+            print(f"  channel_{kind:8} at {at.strftime('%H:%M')} {channel_config.timezone}  next: {nxt.isoformat() if nxt else 'never'}")
+    if entries:
+        for line in describe_settings():
+            print(f"  {line}")
+
+
 def main(argv: list[str] | None = None, *, block: bool = True) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--db", default=str(DEFAULT_DB_PATH))
@@ -100,7 +110,12 @@ def main(argv: list[str] | None = None, *, block: bool = True) -> int:
     mode.add_argument("--print-schedule", action="store_true", help="show the schedule and exit")
     parser.add_argument("--at", help="with --once: act as if it were this time, in the project's timezone")
     parser.add_argument("--job", choices=["morning", "end-of-day"], default="morning", help="with --once: which job to run")
+    parser.add_argument("--channel-briefs", default=os.environ.get("PM_CHANNEL_BRIEFS", ""), metavar="NAMES",
+                        help="comma-separated real channels (P1 display names or ids) to make morning and evening briefs for, from P1's real "
+                             "records (default: PM_CHANNEL_BRIEFS). Given, the seeded sample project is NOT scheduled unless --with-sample-project")
+    parser.add_argument("--with-sample-project", action="store_true", help="with --channel-briefs: also schedule the seeded sample project's jobs")
     args = parser.parse_args(argv)
+    channels = [c.strip() for c in args.channel_briefs.split(",") if c.strip()]
 
     config = default_project_schedule_config()
 
@@ -129,14 +144,20 @@ def main(argv: list[str] | None = None, *, block: bool = True) -> int:
                 print("next:     uv run python scripts/approve.py list")
         return 0
 
-    scheduler = build_scheduler([config], _gateway(args.gateway), db_path=args.db)
+    sample = args.with_sample_project or not channels
+    scheduler = build_scheduler([config] if sample else [], _gateway(args.gateway), db_path=args.db)
+    entries = add_channel_brief_jobs(scheduler, channels, db_path=args.db) if channels else []
     if args.print_schedule:
-        _print_schedule(scheduler, config)
+        if sample:
+            _print_schedule(scheduler, config)
+        _print_channel_briefs(scheduler, entries)
         return 0
 
     scheduler.start()
     print("Scheduler running. Ctrl-C to stop.")
-    _print_schedule(scheduler, config)
+    if sample:
+        _print_schedule(scheduler, config)
+    _print_channel_briefs(scheduler, entries)
     if not block:
         scheduler.shutdown(wait=False)
         return 0

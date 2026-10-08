@@ -174,9 +174,10 @@ def _summarize(proposal: Proposal) -> PendingApproval:
     payload = proposal.payload
     target = payload.get("target_channel", "?")
     date = payload.get("local_date", "?")
-    summary = f"Morning brief for {date} to {target}"
+    named = payload.get("channel_display_name") or target  # a channel brief knows the channel's name; the id alone says nothing to a person
+    summary = f"Morning brief for {date} to {named}"
     if proposal.type == EOD_PROPOSAL_TYPE:
-        summary = f"End-of-day summary for {date} to {target}"
+        summary = f"End-of-day summary for {date} to {named}"
     if proposal.type == NUDGE_PROPOSAL_TYPE:
         summary = f"Reminder to {payload.get('recipient_name') or target} about commitment #{payload.get('commitment_id')}"
     if proposal.type == ESCALATION_PROPOSAL_TYPE:
