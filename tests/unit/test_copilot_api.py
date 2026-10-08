@@ -400,11 +400,89 @@ def test_the_published_openapi_document_is_the_one_the_api_serves():
     assert json.loads(published.read_text()) == api.app.openapi(), "regenerate it: uv run python scripts/generate_openapi.py"
 
 
-def test_every_action_in_the_document_asks_for_the_key_and_the_decision_asks_for_the_user():
+def test_the_key_is_the_connectors_security_setting_not_an_input_on_every_action():
     spec = api.app.openapi()
+
+    scheme = spec["components"]["securitySchemes"]["APIKeyHeader"]
+    assert scheme == {"type": "apiKey", "in": "header", "name": "X-API-Key", "description": scheme["description"]}
     for path, methods in spec["paths"].items():
+        operation = methods.get("post") or methods["get"]
         if path == "/health":
+            assert "security" not in operation
             continue
-        params = {p["name"].lower() for p in methods["post"].get("parameters", [])}
-        assert "x-api-key" in params, path
+        assert {"APIKeyHeader": []} in operation["security"], path
+        assert "x-api-key" not in {p["name"].lower() for p in operation.get("parameters", [])}, path  # not an input a flow author must fill in
     assert "x-authenticated-user" in {p["name"].lower() for p in spec["paths"]["/card_action"]["post"]["parameters"]}
+
+
+def test_the_actions_have_names_a_flow_author_can_read():
+    spec = api.app.openapi()
+
+    operations = {path: (m.get("post") or m["get"]) for path, m in spec["paths"].items()}
+    assert {path: op["operationId"] for path, op in operations.items()} == {
+        "/health": "Health", "/list_pending_approvals": "ListPendingApprovals", "/card_action": "CardAction",
+        "/get_decision_card": "GetDecisionCard", "/list_risks": "ListRisks", "/explain_risk": "ExplainRisk",
+    }
+    assert all(op["summary"] and op["description"] for op in operations.values())
+
+
+# --- the file a custom connector is made from ---------------------------------------------------------------------------------------------
+
+
+def test_the_connector_file_is_openapi_3_0_with_the_servers_address_and_no_null_types():
+    from pm.api.connector_spec import connector_spec
+
+    spec = connector_spec(api.app.openapi(), "https://pm.example.org")
+    text = json.dumps(spec)
+
+    assert spec["openapi"].startswith("3.0") and spec["servers"] == [{"url": "https://pm.example.org"}]
+    assert '"null"' not in text and "contentMediaType" not in text
+    assert spec["components"]["securitySchemes"]["APIKeyHeader"]["name"] == "X-API-Key"
+    assert set(spec["paths"]) == set(api.app.openapi()["paths"])
+
+
+def test_converting_does_not_change_the_apis_own_document():
+    from pm.api.connector_spec import connector_spec
+
+    before = json.dumps(api.app.openapi(), sort_keys=True)
+    connector_spec(api.app.openapi(), "https://pm.example.org")
+
+    assert json.dumps(api.app.openapi(), sort_keys=True) == before
+
+
+def test_an_optional_field_becomes_nullable_not_a_union_with_null():
+    from pm.api.connector_spec import connector_spec
+
+    spec = connector_spec({"openapi": "3.1.0", "info": {}, "paths": {}, "components": {"schemas": {"X": {"type": "object", "properties": {
+        "a": {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "A"},
+        "b": {"anyOf": [{"type": "string"}, {"type": "integer"}, {"type": "null"}]},
+    }}}}}, "https://h")
+
+    props = spec["components"]["schemas"]["X"]["properties"]
+    assert props["a"] == {"type": "string", "title": "A", "nullable": True}
+    assert props["b"] == {"anyOf": [{"type": "string"}, {"type": "integer"}], "nullable": True}
+
+
+def test_a_header_every_call_must_carry_is_a_hidden_parameter_with_its_value_set():
+    """A free tunnel shows a browser-warning page to a caller that looks like a browser (a connector's runtime does) unless this header is sent:
+    the connector file can say so once, as a hidden parameter with a default, and every action then sends it."""
+    from pm.api.connector_spec import connector_spec
+
+    spec = connector_spec(api.app.openapi(), "https://t.example", always_send={"ngrok-skip-browser-warning": "1"})
+
+    for path, methods in spec["paths"].items():
+        for operation in methods.values():
+            hidden = [p for p in operation["parameters"] if p["name"] == "ngrok-skip-browser-warning"]
+            assert len(hidden) == 1, path
+            assert hidden[0]["in"] == "header" and hidden[0]["required"] is True and hidden[0]["x-ms-visibility"] == "internal"  # the importer insists: internal + default = required
+            assert hidden[0]["schema"]["default"] == "1"
+    card_action = {p["name"] for p in spec["paths"]["/card_action"]["post"]["parameters"]}
+    assert {"x-authenticated-user", "ngrok-skip-browser-warning"} <= card_action  # the real inputs are still there
+
+
+def test_without_the_option_no_extra_parameter_is_added():
+    from pm.api.connector_spec import connector_spec
+
+    spec = connector_spec(api.app.openapi(), "https://t.example")
+
+    assert all("ngrok-skip-browser-warning" not in json.dumps(op) for m in spec["paths"].values() for op in m.values())

@@ -41,7 +41,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Security
+from fastapi.security import APIKeyHeader
 from p1.adapters.teams_publisher_mock import LogPublisher
 from pydantic import BaseModel, ConfigDict
 from spine.approval.proposals import ProposalNotFoundError
@@ -93,7 +94,13 @@ def get_policy() -> service.ApprovalPolicy:
     return service.load_approval_policy()
 
 
-def require_api_key(x_api_key: Annotated[str | None, Header()] = None) -> None:
+_key_header = APIKeyHeader(
+    name="X-API-Key", auto_error=False,
+    description="The shared secret (PM_COPILOT_API_KEY) the Power Platform connection sends. Set it once in the connector's security tab.",
+)
+
+
+def require_api_key(x_api_key: Annotated[str | None, Security(_key_header)] = None) -> None:
     configured = os.environ.get(API_KEY_ENV_VAR)
     if not configured:
         raise HTTPException(status_code=500, detail=f"{API_KEY_ENV_VAR} is not set -- refusing to serve any action endpoint until it is.")
@@ -132,7 +139,8 @@ class RiskRef(BaseModel):
     risk_id: str
 
 
-@app.get("/health")
+@app.get("/health", operation_id="Health", summary="Health check",
+         description="No key needed. Says whether a key and approvers are configured (never what they are) and whether a post would reach Teams or only a log.")
 def health() -> dict:
     """No key needed: a connectivity probe, never a capability. Says whether a key and approvers are configured (not what they are),
     and whether a post would reach Teams or only a log."""
@@ -146,13 +154,15 @@ def health() -> dict:
     }
 
 
-@app.post("/list_pending_approvals")
+@app.post("/list_pending_approvals", operation_id="ListPendingApprovals", summary="List pending approvals",
+          description="Every proposal awaiting a decision, each with the Adaptive Card to show for it (a morning brief or end-of-day summary to approve, or a batch from a channel record to read and reject).")
 def list_pending_approvals(_: Annotated[None, Depends(require_api_key)]) -> dict:
     """Every proposal awaiting a decision, each with the Adaptive Card to show for it."""
     return cards.handle_list_pending({}, db_path=_db_path())
 
 
-@app.post("/card_action")
+@app.post("/card_action", operation_id="CardAction", summary="Approve or reject from a card",
+          description="The card's Approve or Reject. WHO is acting is the X-Authenticated-User header, set by the flow from the Teams responder, never from the card or the body. Always answers 200 with an outcome: sent, rejected, refused, send_failed or held.")
 def card_action(
     body: CardAction,
     publisher: Annotated[Any, Depends(get_publisher)],
@@ -166,7 +176,8 @@ def card_action(
     )
 
 
-@app.post("/get_decision_card")
+@app.post("/get_decision_card", operation_id="GetDecisionCard", summary="Get the decision card",
+          description="The card to show once a decision is made: who decided, when, what was proposed, what was applied.")
 def get_decision_card(body: ProposalRef, _: Annotated[None, Depends(require_api_key)]) -> dict:
     """The card to show once a decision is made: who, when, what was proposed, what was applied."""
     try:
@@ -175,7 +186,8 @@ def get_decision_card(body: ProposalRef, _: Annotated[None, Depends(require_api_
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-@app.post("/list_risks")
+@app.post("/list_risks", operation_id="ListRisks", summary="List risks",
+          description="The risk log, optionally narrowed by status, severity or tracker item, with a plain-language summary. Reads only.")
 def list_risks(body: RiskQuery, _: Annotated[None, Depends(require_api_key)]) -> dict:
     """The risk log, optionally narrowed by status, severity or tracker item, with a plain-language summary. Reads only."""
     risks = [
@@ -189,7 +201,8 @@ def list_risks(body: RiskQuery, _: Annotated[None, Depends(require_api_key)]) ->
     }
 
 
-@app.post("/explain_risk")
+@app.post("/explain_risk", operation_id="ExplainRisk", summary="Explain a risk",
+          description="One risk explained: its tracker item, who has it, and what is still waiting for a decision about it. Reads only.")
 def explain_risk(body: RiskRef, _: Annotated[None, Depends(require_api_key)]) -> dict:
     """One risk explained: its item, who has it, and what is still waiting for a decision about it. Reads only."""
     try:

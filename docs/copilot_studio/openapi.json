@@ -160,6 +160,14 @@
         "title": "ValidationError",
         "type": "object"
       }
+    },
+    "securitySchemes": {
+      "APIKeyHeader": {
+        "description": "The shared secret (PM_COPILOT_API_KEY) the Power Platform connection sends. Set it once in the connector's security tab.",
+        "in": "header",
+        "name": "X-API-Key",
+        "type": "apiKey"
+      }
     }
   },
   "info": {
@@ -171,8 +179,8 @@
   "paths": {
     "/card_action": {
       "post": {
-        "description": "The card's Approve or Reject. The approver is X-Authenticated-User, set by the flow from the Teams responder; the body cannot name one.",
-        "operationId": "card_action_card_action_post",
+        "description": "The card's Approve or Reject. WHO is acting is the X-Authenticated-User header, set by the flow from the Teams responder, never from the card or the body. Always answers 200 with an outcome: sent, rejected, refused, send_failed or held.",
+        "operationId": "CardAction",
         "parameters": [
           {
             "in": "header",
@@ -188,22 +196,6 @@
                 }
               ],
               "title": "X-Authenticated-User"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-api-key",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Api-Key"
             }
           }
         ],
@@ -223,7 +215,7 @@
               "application/json": {
                 "schema": {
                   "additionalProperties": true,
-                  "title": "Response Card Action Card Action Post",
+                  "title": "Response Cardaction",
                   "type": "object"
                 }
               }
@@ -241,31 +233,18 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Card Action"
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Approve or reject from a card"
       }
     },
     "/explain_risk": {
       "post": {
-        "description": "One risk explained: its item, who has it, and what is still waiting for a decision about it. Reads only.",
-        "operationId": "explain_risk_explain_risk_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "x-api-key",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Api-Key"
-            }
-          }
-        ],
+        "description": "One risk explained: its tracker item, who has it, and what is still waiting for a decision about it. Reads only.",
+        "operationId": "ExplainRisk",
         "requestBody": {
           "content": {
             "application/json": {
@@ -282,7 +261,7 @@
               "application/json": {
                 "schema": {
                   "additionalProperties": true,
-                  "title": "Response Explain Risk Explain Risk Post",
+                  "title": "Response Explainrisk",
                   "type": "object"
                 }
               }
@@ -300,31 +279,18 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Explain Risk"
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Explain a risk"
       }
     },
     "/get_decision_card": {
       "post": {
-        "description": "The card to show once a decision is made: who, when, what was proposed, what was applied.",
-        "operationId": "get_decision_card_get_decision_card_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "x-api-key",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Api-Key"
-            }
-          }
-        ],
+        "description": "The card to show once a decision is made: who decided, when, what was proposed, what was applied.",
+        "operationId": "GetDecisionCard",
         "requestBody": {
           "content": {
             "application/json": {
@@ -341,7 +307,7 @@
               "application/json": {
                 "schema": {
                   "additionalProperties": true,
-                  "title": "Response Get Decision Card Get Decision Card Post",
+                  "title": "Response Getdecisioncard",
                   "type": "object"
                 }
               }
@@ -359,20 +325,25 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Get Decision Card"
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Get the decision card"
       }
     },
     "/health": {
       "get": {
-        "description": "No key needed: a connectivity probe, never a capability. Says whether a key and approvers are configured (not what they are),\nand whether a post would reach Teams or only a log.",
-        "operationId": "health_health_get",
+        "description": "No key needed. Says whether a key and approvers are configured (never what they are) and whether a post would reach Teams or only a log.",
+        "operationId": "Health",
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
                   "additionalProperties": true,
-                  "title": "Response Health Health Get",
+                  "title": "Response Health",
                   "type": "object"
                 }
               }
@@ -380,80 +351,39 @@
             "description": "Successful Response"
           }
         },
-        "summary": "Health"
+        "summary": "Health check"
       }
     },
     "/list_pending_approvals": {
       "post": {
-        "description": "Every proposal awaiting a decision, each with the Adaptive Card to show for it.",
-        "operationId": "list_pending_approvals_list_pending_approvals_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "x-api-key",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Api-Key"
-            }
-          }
-        ],
+        "description": "Every proposal awaiting a decision, each with the Adaptive Card to show for it (a morning brief or end-of-day summary to approve, or a batch from a channel record to read and reject).",
+        "operationId": "ListPendingApprovals",
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
                   "additionalProperties": true,
-                  "title": "Response List Pending Approvals List Pending Approvals Post",
+                  "title": "Response Listpendingapprovals",
                   "type": "object"
                 }
               }
             },
             "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
           }
         },
-        "summary": "List Pending Approvals"
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "List pending approvals"
       }
     },
     "/list_risks": {
       "post": {
         "description": "The risk log, optionally narrowed by status, severity or tracker item, with a plain-language summary. Reads only.",
-        "operationId": "list_risks_list_risks_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "x-api-key",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Api-Key"
-            }
-          }
-        ],
+        "operationId": "ListRisks",
         "requestBody": {
           "content": {
             "application/json": {
@@ -470,7 +400,7 @@
               "application/json": {
                 "schema": {
                   "additionalProperties": true,
-                  "title": "Response List Risks List Risks Post",
+                  "title": "Response Listrisks",
                   "type": "object"
                 }
               }
@@ -488,7 +418,12 @@
             "description": "Validation Error"
           }
         },
-        "summary": "List Risks"
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "List risks"
       }
     }
   }
