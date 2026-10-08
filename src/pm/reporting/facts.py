@@ -79,6 +79,13 @@ class UnassignedFact(BaseModel):
     status: str
 
 
+class UnreferencedCommit(BaseModel):
+    sha: str
+    subject: str  # the first line of the commit message, exactly as written
+    author: str  # the roster name when the author is a known person, else the author as written
+    committed_on: str  # the calendar date, as recorded
+
+
 class PersonFacts(BaseModel):
     assignee_id: str
     display_name: str | None = None  # from the tracker's roster; None when it has none for this id
@@ -131,6 +138,7 @@ class MorningBriefFacts(BaseModel):
     sprint: SprintScopeFacts | None = None  # None if taken_at's date falls outside every known sprint
     people: list[PersonFacts]
     blockers: list[BlockerFact]
+    unreferenced_commits: list[UnreferencedCommit] = []  # commits by people that name no work item: counted as activity, but not tied to any work
     unassigned: list[UnassignedFact] = []  # open items nobody owns: they belong to no person's section, so they would otherwise appear nowhere
     automated_commit_count: int = 0  # commits by ignored automated accounts (bots): not anyone's activity, but not hidden
 
@@ -172,6 +180,23 @@ def _commits_by_person(snapshot: ProjectSnapshot) -> tuple[dict[str, int], int]:
         else:
             counts[person] = counts.get(person, 0) + 1
     return counts, automated
+
+
+def _unreferenced_commits(snapshot: ProjectSnapshot, names: dict[str, str]) -> list[UnreferencedCommit]:
+    """Commits by real people (not ignored automated accounts) whose message names no work item, oldest first."""
+    roster_ids = [assignee.id for assignee in snapshot.roster]
+    found = []
+    for commit in snapshot.commits:
+        if commit.item_ref is not None:
+            continue
+        person = snapshot.identities.resolve(commit.author_id, roster_ids)
+        if person is None:
+            continue
+        found.append(UnreferencedCommit(
+            sha=commit.sha, subject=commit.message.splitlines()[0] if commit.message else "",
+            author=names.get(person, person), committed_on=commit.committed_at[:10],
+        ))
+    return sorted(found, key=lambda c: (c.committed_on, c.sha))
 
 
 def _person_names(snapshot: ProjectSnapshot) -> dict[str, str]:
@@ -278,6 +303,7 @@ def compute_morning_brief_facts(snapshot: ProjectSnapshot) -> MorningBriefFacts:
         sprint=_resolve_sprint_scope(snapshot, as_of_date),
         people=_compute_person_facts(snapshot, commit_counts, names),
         blockers=_compute_blocker_facts(snapshot, names),
+        unreferenced_commits=_unreferenced_commits(snapshot, names),
         unassigned=sorted(
             (UnassignedFact(item_id=i.id, title=i.title, status=i.status) for i in snapshot.items
              if i.assignee_id is None and i.status != "done"),

@@ -179,3 +179,23 @@ def test_a_finished_item_with_no_owner_is_not_listed(seeded_db_path):
     later = _snapshot(seeded_db_path, taken_at="2099-01-01T00:00:00+00:00")  # after the transition, which is stamped now
 
     assert compute_morning_brief_facts(later).unassigned == []
+
+
+def test_a_commit_that_names_no_item_is_a_fact_with_its_author_and_date_as_recorded(seeded_db_path):
+    facts = compute_morning_brief_facts(_snapshot(seeded_db_path))
+
+    assert [(c.sha, c.subject, c.author, c.committed_on) for c in facts.unreferenced_commits] == [
+        ("b8888bb", "chore: bump CI runner image to node 20", "Wei Chen", "2026-09-16")]  # the seed's one commit with no item_ref
+
+
+def test_a_commit_by_an_ignored_automated_account_is_not_listed_as_unreferenced_work(seeded_db_path):
+    import sqlite3
+
+    conn = sqlite3.connect(seeded_db_path)
+    conn.execute("INSERT INTO commits (sha, author_id, message, item_ref, committed_at) VALUES ('b0t0001', 'ci-bot', 'bump deps', NULL, '2026-09-17')")
+    conn.commit()
+    conn.close()
+    snapshot = _snapshot(seeded_db_path)
+    snapshot = snapshot.model_copy(update={"identities": snapshot.identities.model_copy(update={"ignored_authors": ["ci-bot"]})})
+
+    assert "b0t0001" not in {c.sha for c in compute_morning_brief_facts(snapshot).unreferenced_commits}

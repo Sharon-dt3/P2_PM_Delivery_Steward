@@ -513,6 +513,11 @@ def _render_brief(facts: MorningBriefFacts, sections: dict[str, list[FactualLine
         parts += [f"- {u.item_id} ({u.title}): nobody is assigned; status {u.status}." for u in facts.unassigned]
         parts.append("")
 
+    if facts.unreferenced_commits:
+        parts.append("## Commits with no item reference")
+        parts += [f"- {c.sha}: {c.subject} ({c.author}, {c.committed_on})." for c in facts.unreferenced_commits]
+        parts.append("")
+
     parts.append("## Blockers")
     blocker_lines = sorted(sections["blockers"], key=_order_key("blockers", facts))
     grounded_refs = {line.message_id for line in blocker_lines}

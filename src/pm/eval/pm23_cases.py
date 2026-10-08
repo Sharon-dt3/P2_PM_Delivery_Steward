@@ -84,6 +84,12 @@ def facts_from_text(content: str) -> set[Fact]:
         if title == "Blockers":
             facts |= _blocker_facts(lines)
             continue
+        if title == "Commits with no item reference":
+            for line in lines:
+                found = re.match(r"([0-9a-f]{7,40}): ", line)
+                if found:
+                    facts.add(("unreferenced_commit", found.group(1)))
+            continue
         if title == "Nobody is assigned":
             for line in lines:
                 found = re.match(r"(PM-\d+) \(.*\): nobody is assigned; status (\S+)\.$", line)
@@ -134,6 +140,7 @@ def facts_from_structure(facts: MorningBriefFacts) -> set[Fact]:
         out |= {("sprint", "id", sprint.sprint_id), ("sprint", "day", sprint.day_number, sprint.total_days),
                 ("sprint", "done", sprint.done_items, sprint.total_items)}
     out |= {("unassigned", u.item_id, u.status) for u in facts.unassigned}
+    out |= {("unreferenced_commit", c.sha) for c in facts.unreferenced_commits}
     for person in facts.people:
         out.add(("owner", person.name))
         if not person.has_activity:

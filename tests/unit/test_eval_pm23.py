@@ -416,3 +416,19 @@ def test_an_unassigned_item_is_a_checked_fact_a_brief_that_drops_or_misstates_it
     assert facts_from_text(shown) == expected  # said exactly as the structure has it
     assert facts_from_text(dropped) != expected and facts_from_text(misstated) != expected
     assert not any(f[0] == "owner" and f[1] == "Nobody is assigned" for f in facts_from_text(shown))  # never mistaken for a person
+
+
+def test_an_unreferenced_commit_is_a_checked_fact_a_brief_that_drops_it_is_caught():
+    from pm.eval.pm23_cases import facts_from_structure, facts_from_text
+    from pm.reporting.facts import MorningBriefFacts, UnreferencedCommit
+
+    facts = MorningBriefFacts(as_of="2026-09-18T12:00:00+00:00", people=[], blockers=[], unreferenced_commits=[
+        UnreferencedCommit(sha="b8888bb", subject="chore: bump CI runner image to node 20", author="Wei Chen", committed_on="2026-09-16")])
+    shown = ("Sprint scope: no sprint on file covers this date.\n\n## Commits with no item reference\n"
+             "- b8888bb: chore: bump CI runner image to node 20 (Wei Chen, 2026-09-16).\n\n## Blockers\n- none.")
+    dropped = shown.replace("## Commits with no item reference\n- b8888bb: chore: bump CI runner image to node 20 (Wei Chen, 2026-09-16).\n\n", "")
+
+    expected = facts_from_structure(facts)
+
+    assert ("unreferenced_commit", "b8888bb") in expected and facts_from_text(shown) == expected and facts_from_text(dropped) != expected
+    assert not any(f[0] == "owner" for f in facts_from_text(shown))

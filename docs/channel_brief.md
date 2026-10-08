@@ -57,6 +57,20 @@ An item is "this channel's" only when P1's message store says its source message
 seeded sample project (PM-018 and the rest) and anything P1 never saw are never listed, and with P1's store unreadable the section is left out
 rather than guessed. The sample-project morning brief has the same idea as a section, "Nobody is assigned", worded by code and never by the model.
 
+## The project's commits (opt-in)
+
+With `PM_CHANNEL_REPOS` set for a channel, its brief also shows the commits made on the day it reports (the previous calendar day in the morning,
+the same day in the evening, in the channel's own timezone), read from the listed git repositories, read-only:
+
+```
+PM_CHANNEL_REPOS="p1-agent-test=/path/to/P2_PM_Delivery_Steward,/path/to/P3_Agents"
+```
+
+Channels split by `;`, a channel's repositories by `,`, the channel by display name or id. A channel with none configured has no commit sections.
+Two sections: **Commits with no item reference** and **Commits that name an item** (with whether the tracker has that item). See
+`docs/commit_convention.md` for how a commit names an item. A repository that cannot be read leaves the sections out and the audit says `unreadable`;
+the brief is still made. Subjects are shown exactly as written, so anything in a commit subject is visible to the channel.
+
 ## Automatic end to end
 
 Nothing in a normal day is run by hand:

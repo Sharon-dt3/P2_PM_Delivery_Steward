@@ -34,6 +34,7 @@ from pm.adapters.risk_log import RiskLogMock
 from pm.adapters.teams import P1_REPO_ROOT
 from pm.adapters.tracker import TrackerMock
 from pm.channel.record import ChannelRecord, RecordRefused, load_record, record_file
+from pm.channelbrief.commits import CommitLine, commit_lines
 from pm.commitments.outcomes import is_commitment, resolve_due
 
 MORNING, EVENING = "morning", "evening"
@@ -103,6 +104,7 @@ class ChannelBriefFacts:
     promises: tuple[Promise, ...]
     work: tuple[Work, ...]
     sources: dict = field(default_factory=dict)  # what was read, for the audit
+    commits: tuple[CommitLine, ...] = ()  # the day's real git commits for this channel's configured repositories; empty when none are configured
     unassigned: tuple[Work, ...] = ()  # this channel's own tracker items that nobody owns yet and are not done: a standing list, not only today's
 
     def lines(self) -> list[Line]:
@@ -263,6 +265,8 @@ def compute_channel_brief_facts(
     db_path,
     outcomes_dir: Path | None = None,
     directory: P1Directory | None = None,
+    repos: list[Path] | None = None,
+    timezone: str | None = None,
 ) -> ChannelBriefFacts:
     """The brief's facts for `channel_id` on `local_date`. Raises NoUsableRecord (with a code) when there is nothing real to report from."""
     root = outcomes_dir or outcomes_root()
@@ -296,10 +300,12 @@ def compute_channel_brief_facts(
             except RecordRefused:
                 continue  # a day P1 was not cleared to pass on contributes nothing, quietly, here: the refusal is already P1's to record
     message_ids = {i.message_id for name in SECTIONS for i in getattr(record, name)}
+    commits, commits_state = (commit_lines(repos, day=newest, timezone=timezone, db_path=db_path) if repos and timezone else ((), "off"))
     return ChannelBriefFacts(
         channel_id=channel_id, channel_name=channel_name, kind=kind, local_date=local_date.isoformat(), record_date=record.date,
         record_age_days=(local_date - date.fromisoformat(record.date)).days, sections=sections, silent=silent,
         promises=_promises(recent, directory, local_date), work=_work_from(message_ids, db_path),
-        unassigned=_unassigned_from(channel_id, directory, db_path),
-        sources={"record": str(path), "authors_from_p1_store": directory.available, "records_read_for_promises": [d.isoformat() for d, _ in recent]},
+        unassigned=_unassigned_from(channel_id, directory, db_path), commits=commits,
+        sources={"record": str(path), "authors_from_p1_store": directory.available, "records_read_for_promises": [d.isoformat() for d, _ in recent],
+                 "commits": commits_state},
     )

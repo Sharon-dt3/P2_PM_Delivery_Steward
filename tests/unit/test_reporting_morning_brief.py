@@ -470,3 +470,17 @@ def test_the_section_is_left_out_when_everything_has_an_owner_so_an_ordinary_bri
     from pm.reporting.morning_brief import _render_brief
 
     assert "Nobody is assigned" not in _render_brief(_facts(), _NO_LINES)
+
+
+def test_the_brief_names_each_commit_that_ties_to_no_work_in_a_section_no_model_words():
+    from pm.reporting.facts import UnreferencedCommit
+    from pm.reporting.morning_brief import _render_brief
+
+    facts = _facts().model_copy(update={"unreferenced_commits": [
+        UnreferencedCommit(sha="b8888bb", subject="chore: bump CI runner image to node 20", author="Wei Chen", committed_on="2026-09-16")]})
+
+    text = _render_brief(facts, _NO_LINES)
+
+    assert "## Commits with no item reference\n- b8888bb: chore: bump CI runner image to node 20 (Wei Chen, 2026-09-16)." in text
+    assert text.index("## Commits with no item reference") < text.index("## Blockers")
+    assert "Commits with no item reference" not in _render_brief(_facts(), _NO_LINES)  # and no heading when there are none

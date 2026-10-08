@@ -65,6 +65,8 @@ def render_content(facts: ChannelBriefFacts) -> str:
     if facts.kind == MORNING and facts.record_age_days > 1:
         out.append(f"This is the newest record on file, {_days(facts.record_age_days)} old: nothing newer has been recorded.")
     out.append("Every line below is quoted from that record or computed from it; none of it is generated.")
+    if facts.commits:
+        out.append("Commits are read from the project's git history, as written.")
 
     for name in ("blockers", "decisions", "updates", "questions"):
         lines = _by_message(facts.sections[name])
@@ -98,6 +100,21 @@ def render_content(facts: ChannelBriefFacts) -> str:
         if len(facts.unassigned) > limit:
             out.append(f"- and {len(facts.unassigned) - limit} more")
 
+    unlinked = [c for c in facts.commits if c.item_ref is None]
+    linked = [c for c in facts.commits if c.item_ref is not None]
+    if unlinked:
+        out += ["", f"## Commits with no item reference ({len(unlinked)})"]
+        out += [f"- {c.sha}: {c.subject} ({c.author}, {c.day})" for c in unlinked[:limit]]
+        if len(unlinked) > limit:
+            out.append(f"- and {len(unlinked) - limit} more")
+    if linked:
+        out += ["", f"## Commits that name an item ({len(linked)})"]
+        for c in linked[:limit]:
+            names = f"names {c.item_ref}" if c.item_known else f"names {c.item_ref}, which is not in the tracker"
+            out.append(f"- {c.sha}: {c.subject} ({c.author}, {c.day}; {names})")
+        if len(linked) > limit:
+            out.append(f"- and {len(linked) - limit} more")
+
     if facts.silent:
         out += ["", "## No say that day"]
         out += [f"- {who}: {what.lower()}" for who, what in facts.silent]
@@ -116,4 +133,6 @@ def evidence_lines(facts: ChannelBriefFacts) -> list[dict]:
     lines += [{"section": "promise", "reference_id": p.line.message_id, "text": p.line.text, "quote": p.line.quote} for p in facts.promises]
     lines += [{"section": f"work:{w.kind}", "reference_id": w.message_id, "text": f"{w.ref}: {w.title}", "quote": None} for w in facts.work]
     lines += [{"section": "unassigned:tracker", "reference_id": w.message_id, "text": f"{w.ref}: {w.title}", "quote": None} for w in facts.unassigned]
+    lines += [{"section": "commit:unreferenced" if c.item_ref is None else "commit:referenced", "reference_id": c.sha, "text": f"{c.sha}: {c.subject}", "quote": None}
+              for c in facts.commits]
     return lines

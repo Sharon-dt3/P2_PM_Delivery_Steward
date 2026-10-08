@@ -26,6 +26,7 @@ from pm.approval.service import ApprovalPolicy
 from pm.channel.batches import TrackerView, consume
 from pm.channel.gate import log_refusal
 from pm.channel.record import RecordRefused
+from pm.channelbrief.commits import repos_for
 from pm.channelbrief.facts import (
     ChannelBriefFacts,
     NoUsableRecord,
@@ -89,6 +90,7 @@ def run_channel_brief_job(
     try:
         facts = compute_channel_brief_facts(
             config.channel_id, channel_name, kind, local_day, db_path=db_path, outcomes_dir=outcomes_dir, directory=directory,
+            repos=repos_for(channel_name, config.channel_id), timezone=config.timezone,
         )
     except NoUsableRecord as exc:
         if exc.code not in ("no_record", "record_not_written_yet"):  # a refused record is P1 withholding consent: leave the same row P2's other readers leave

@@ -1,0 +1,5 @@
+PM-NNN: what changed, in the imperative
+
+# Name the tracker item this commit is about (PM- and three or more digits, e.g. PM-031).
+# A commit about no tracked item (a dependency bump, a typo) names none: leave the id out.
+# Plan rows such as PM-29 are not tracker items; the briefs call a commit that names only one "no item reference".
