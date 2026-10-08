@@ -1,6 +1,8 @@
 """The job body for a channel brief (see pm.channelbrief): what a scheduler fires, and what scripts/run_channel_brief.py runs by hand.
 
-Reads the real record, computes the facts, renders the message, and PROPOSES it (pm.channelbrief.proposal): nothing is sent. A person
+Reads the real record, computes the facts, renders the message, and PROPOSES it (pm.channelbrief.proposal): nothing is sent. From the same
+record it also proposes the two batches (tracker changes, risk-log entries: pm.channel.batches), so a scheduled day needs nothing run by hand
+(PM_CHANNEL_BATCHES=0 turns that off); reading a record again proposes nothing new. A person
 approves, edits or rejects it through pm.approval.service (a Teams card, the dashboard, scripts/approve.py), and only then is it posted,
 through the publisher chosen by TEAMS_PUBLISHER_MODE, to a channel on P1's allowlist, logged and audited. With nothing real to report from
 (no record, a stale one, one P1 was not cleared to pass on) it proposes nothing and says why: it never falls back to anything else.
@@ -17,8 +19,11 @@ from zoneinfo import ZoneInfo
 
 from spine.config.calendar import is_working_day
 
+from pm.adapters.risk_log import RiskLogMock
+from pm.adapters.tracker import TrackerMock
 from pm.approval.proposals import NOT_ATTEMPTED
 from pm.approval.service import ApprovalPolicy
+from pm.channel.batches import TrackerView, consume
 from pm.channel.gate import log_refusal
 from pm.channel.record import RecordRefused
 from pm.channelbrief.facts import (
@@ -38,6 +43,7 @@ PROPOSED_FROM_RECORD = "proposed_from_record"
 SKIPPED_NON_WORKING_DAY = "skipped_non_working_day"
 NO_DATA = "no_data"  # nothing real to make a brief from: nothing is proposed
 ENV_LABEL = "PM_CHANNEL_BRIEF_LABEL"
+ENV_BATCHES = "PM_CHANNEL_BATCHES"  # "0" turns off proposing the tracker and risk batches from the record (default: on)
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +60,7 @@ class ChannelBriefResult:
     delivery_status: str = NOT_ATTEMPTED
     delivery_detail: str = ""
     proposal_id: str | None = None
+    batches: str = ""  # what proposing the tracker and risk batches from the same record did: off | error | refused | a sentence
 
 
 @mirrored
@@ -99,7 +106,26 @@ def run_channel_brief_job(
     return ChannelBriefResult(
         **base, status=PROPOSED_FROM_RECORD, detail=f"built from P1's record for {facts.record_date}", message=message, facts=facts,
         delivery_status=status, delivery_detail=detail, proposal_id=proposal_id,
+        batches=_propose_batches(Path(facts.sources["record"]), db_path),
     )
+
+
+def _propose_batches(record_path: Path, db_path) -> str:
+    """The tracker and risk batches from the same record. Never raises: the brief is already proposed and a failure here must not take the job
+    down. Reading the same record again proposes nothing new (pm.channel.batches fingerprints every item)."""
+    if os.environ.get(ENV_BATCHES, "1") == "0":
+        return "off"
+    try:
+        done = consume(record_path, TrackerView.from_adapters(TrackerMock(db_path=db_path), RiskLogMock(db_path=db_path)), db_path=db_path)
+    except Exception as exc:  # noqa: BLE001 - the brief is already proposed; a failure here must not take the job down
+        logger.warning("channel_batches_failed error=%s: %s", type(exc).__name__, exc)
+        return "error"
+    if done.refused is not None:
+        return "refused"
+    parts = []
+    for name, batch in (("tracker", done.tracker), ("risk", done.risk)):
+        parts.append(f"{name}: {'proposed' if batch.created else 'nothing new'} ({batch.items} item(s))")
+    return "; ".join(parts)
 
 
 def _log_refused(db_path, channel_id: str, day, exc: NoUsableRecord) -> None:

@@ -252,6 +252,32 @@
         "summary": "Approve or reject from a card"
       }
     },
+    "/claim_new_approvals": {
+      "post": {
+        "description": "Only the pending proposals no card has been sent for yet, each with its Adaptive Card, each recorded as handed out so the next call does not return it again. A proposal still undecided after PM_CARD_RESEND_HOURS (default 24) is handed out once more as a reminder. For a flow that runs on a timer.",
+        "operationId": "ClaimNewApprovals",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Claimnewapprovals",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Claim new approvals"
+      }
+    },
     "/explain_risk": {
       "post": {
         "description": "One risk explained: its tracker item, who has it, and what is still waiting for a decision about it. Reads only.",

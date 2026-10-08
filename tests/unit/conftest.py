@@ -72,4 +72,11 @@ def _tests_never_touch_the_real_supabase_mirror(monkeypatch, tmp_path):
     monkeypatch.setenv("PM_RISK_PROMOTION_CONFIG", str(tmp_path / "no_promotion_config.yaml"))  # no age requirement unless a test sets one
     monkeypatch.setenv("PM_RISK_PROMOTION_THRESHOLD_DAYS", "")
     monkeypatch.setenv("PM_COMMITMENT_FOLLOWUP", "0")  # commitment follow-up messages people: opt-in per test
+    # The real .env now posts for real. The dashboard tests run the app, which calls load_dotenv() on that file, and a variable that is already
+    # set is never overridden: so pin every setting that could make a test post anywhere, or schedule real channels, to its safe value.
+    monkeypatch.setenv("TEAMS_PUBLISHER_MODE", "mock")
+    monkeypatch.setenv("POWER_AUTOMATE_FLOW_URL", "")
+    monkeypatch.setenv("PM_CHANNEL_BRIEFS", "")
+    monkeypatch.setenv("PM_AUTO_APPROVE", "0")
+    monkeypatch.setenv("PM_CHANNEL_BRIEF_LABEL", "")
     monkeypatch.setenv("P1_DB_PATH", str(tmp_path / "no_p1_ledger.db"))  # and no test may read the real P1 nudge ledger

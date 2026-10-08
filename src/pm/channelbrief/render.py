@@ -34,8 +34,13 @@ def _who(line: Line) -> str:
     return f"{line.author}, " if line.author else ""
 
 
+def _source(line: Line) -> str:
+    """How a reader gets to the message: P1's own link to it when P1 has one (as in P1's daily digest), else the message id."""
+    return f"[source]({line.url})" if line.url else f"message {line.message_id}"
+
+
 def _line(line: Line) -> str:
-    return f"- {line.text} ({_who(line)}message {line.message_id})"
+    return f"- {line.text} ({_who(line)}{_source(line)})"
 
 
 def _days(n: int) -> str:
@@ -64,7 +69,7 @@ def render_content(facts: ChannelBriefFacts) -> str:
         out += ["", f"## Said they would ({len(facts.promises)})"]
         for p in facts.promises[:limit]:
             due = f"due {p.due_iso}" if p.due_iso else "no date given"
-            out.append(f"- {_who(p.line)}\"{p.line.text}\" ({due}: {PROMISE_STATE[p.state]}; message {p.line.message_id})")
+            out.append(f"- {_who(p.line)}\"{p.line.text}\" ({due}: {PROMISE_STATE[p.state]}; {_source(p.line)})")
         if len(facts.promises) > limit:
             out.append(f"- and {len(facts.promises) - limit} more")
 

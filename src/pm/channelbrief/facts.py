@@ -69,6 +69,7 @@ class Line:
     quote: str | None
     section: str
     author: str | None  # who said it, when P1's store knows; never guessed
+    url: str | None = None  # the link to the exact Teams message, as P1 stored it; None when P1 has none
 
 
 @dataclass(frozen=True)
@@ -135,6 +136,7 @@ class P1Directory:
         self._path = Path(path) if path is not None else p1_db_path()
         self._names: dict[str, str] = {}
         self._messages: dict[str, tuple[str | None, str]] = {}
+        self._links: dict[str, str] = {}
         self.available = False
         try:
             conn = sqlite3.connect(f"file:{self._path}?mode=ro", uri=True)
@@ -145,6 +147,10 @@ class P1Directory:
                 self._names[member_id] = name or ""
             for message_id, author, posted_at in conn.execute("SELECT id, author_id, posted_at FROM messages"):
                 self._messages[message_id] = (author, posted_at)
+            try:  # a store from before permalinks existed has no such column: no links, everything else works
+                self._links = {m: link for m, link in conn.execute("SELECT id, permalink FROM messages") if link}
+            except sqlite3.Error:
+                self._links = {}
             self.available = True
         except sqlite3.Error:
             self.available = False
@@ -161,6 +167,9 @@ class P1Directory:
     def author_of(self, message_id: str) -> str | None:
         author, _ = self._messages.get(message_id, (None, ""))
         return self.name(author)
+
+    def link_to(self, message_id: str) -> str | None:
+        return self._links.get(message_id)
 
     def posted_on(self, message_id: str) -> str | None:
         _, posted_at = self._messages.get(message_id, (None, ""))
@@ -202,7 +211,8 @@ def _promises(records: list[tuple[date, ChannelRecord]], directory: P1Directory,
                 seen.add(key)
                 made_on = directory.posted_on(item.message_id) or record.date
                 due_iso, due_text = resolve_due(item.text, date.fromisoformat(made_on))
-                line = Line(item.message_id, item.text, item.quote, section[:-1] if section != "updates" else "update", directory.author_of(item.message_id))
+                line = Line(item.message_id, item.text, item.quote, section[:-1] if section != "updates" else "update", directory.author_of(item.message_id),
+                            directory.link_to(item.message_id))
                 if due_iso is None:
                     if record_day == newest:
                         found.append(Promise(line, made_on, None, None, "no_date"))
@@ -244,7 +254,8 @@ def compute_channel_brief_facts(
     directory = directory or P1Directory()
 
     sections = {
-        name: tuple(Line(i.message_id, i.text, i.quote, name[:-1] if name != "updates" else "update", directory.author_of(i.message_id))
+        name: tuple(Line(i.message_id, i.text, i.quote, name[:-1] if name != "updates" else "update", directory.author_of(i.message_id),
+                         directory.link_to(i.message_id))
                     for i in getattr(record, name))
         for name in SECTIONS
     }

@@ -163,6 +163,13 @@ def list_pending_approvals(_: Annotated[None, Depends(require_api_key)]) -> dict
     return cards.handle_list_pending({}, db_path=_db_path())
 
 
+@app.post("/claim_new_approvals", operation_id="ClaimNewApprovals", summary="Claim new approvals",
+          description="Only the pending proposals no card has been sent for yet, each with its Adaptive Card, each recorded as handed out so the next call does not return it again. A proposal still undecided after PM_CARD_RESEND_HOURS (default 24) is handed out once more as a reminder. For a flow that runs on a timer.")
+def claim_new_approvals(_: Annotated[None, Depends(require_api_key)]) -> dict:
+    """Hand out each pending proposal's card once: the new ones, marked as sent."""
+    return cards.handle_claim_new({}, db_path=_db_path())
+
+
 @app.post("/card_action", operation_id="CardAction", summary="Approve or reject from a card",
           description="The card's Approve or Reject. WHO is acting is the X-Authenticated-User header, set by the flow from the Teams responder, never from the card or the body. Always answers 200 with an outcome: sent (a message), applied (written to the risk log), rejected, refused, send_failed or held.")
 def card_action(

@@ -96,12 +96,12 @@ def p1(tmp_path) -> P1Directory:
     conn = sqlite3.connect(path)
     conn.executescript(
         "CREATE TABLE members (id TEXT PRIMARY KEY, display_name TEXT);"
-        "CREATE TABLE messages (id TEXT PRIMARY KEY, author_id TEXT, posted_at TEXT);"
+        "CREATE TABLE messages (id TEXT PRIMARY KEY, author_id TEXT, posted_at TEXT, permalink TEXT);"
     )
     conn.executemany("INSERT INTO members VALUES (?, ?)", [(SHARON, "Sharon Silva"), (ESANDU, "Esandu O"), ("aad-new", "aad-new")])
-    conn.executemany("INSERT INTO messages VALUES (?, ?, ?)", [
-        ("m1", SHARON, "2026-10-07T04:00:00.000Z"), ("m2", SHARON, "2026-10-07T05:00:00.000Z"), ("m3", ESANDU, "2026-10-07T06:00:00.000Z"),
-        ("m4", "aad-new", "2026-10-07T07:00:00.000Z"),
+    conn.executemany("INSERT INTO messages VALUES (?, ?, ?, ?)", [
+        ("m1", SHARON, "2026-10-07T04:00:00.000Z", None), ("m2", SHARON, "2026-10-07T05:00:00.000Z", None),
+        ("m3", ESANDU, "2026-10-07T06:00:00.000Z", "https://teams.example/l/message/m3?groupId=g"), ("m4", "aad-new", "2026-10-07T07:00:00.000Z", None),
     ])
     conn.commit()
     conn.close()
@@ -211,6 +211,29 @@ def test_without_p1s_store_the_brief_still_works_and_names_nobody(seeded_db_path
 
     assert gone.available is False and facts.sections["updates"][0].author is None
     assert "(message m1)" in render_content(facts)
+
+
+def test_a_line_links_to_its_teams_message_when_p1_stored_the_link_and_names_the_message_when_it_did_not(seeded_db_path, outcomes, p1):
+    outcomes("2026-10-07", updates=[evidence("m3", "Esandu's line, which P1 has a link for."), evidence("m1", "Sharon's line, which it has none for.")])
+
+    content = render_content(facts_for(MORNING, seeded_db_path, outcomes, p1))
+
+    assert "(Esandu O, [source](https://teams.example/l/message/m3?groupId=g))" in content  # the same form as P1's daily digest
+    assert "(Sharon Silva, message m1)" in content  # no link stored: the message id, never an invented link
+
+
+def test_a_store_from_before_permalinks_existed_still_works_without_links(seeded_db_path, outcomes, tmp_path):
+    path = tmp_path / "old_p1.db"
+    conn = sqlite3.connect(path)
+    conn.executescript("CREATE TABLE members (id TEXT, display_name TEXT); CREATE TABLE messages (id TEXT, author_id TEXT, posted_at TEXT);"
+                       "INSERT INTO members VALUES ('aad-sharon', 'Sharon Silva'); INSERT INTO messages VALUES ('m1', 'aad-sharon', '2026-10-07T04:00:00Z');")
+    conn.commit()
+    conn.close()
+    outcomes("2026-10-07", updates=[evidence("m1", "An update.")])
+
+    line = facts_for(MORNING, seeded_db_path, outcomes, P1Directory(path)).sections["updates"][0]
+
+    assert line.author == "Sharon Silva" and line.url is None
 
 
 def test_p1s_store_is_opened_read_only(tmp_path):
@@ -362,7 +385,8 @@ def test_every_line_in_the_message_rests_on_a_message_the_record_cites(seeded_db
     cited = {"m1", "m2", "m3", "m4"}
 
     assert {e["reference_id"] for e in evidence_lines(facts)} <= cited
-    assert all(any(f"message {m}" in line for m in cited) for line in render_content(facts).splitlines() if line.startswith("- ") and "none recorded" not in line
+    assert all(any(f"message {m}" in line or f"/message/{m}" in line for m in cited) for line in render_content(facts).splitlines()
+               if line.startswith("- ") and "none recorded" not in line
                and "more in the record" not in line and ": no message" not in line)
 
 
@@ -531,13 +555,75 @@ def test_auto_approve_still_waits_for_a_person_to_approve_the_first_brief_for_a_
     assert result.delivery_status == "proposed" and "waiting for a person" in result.delivery_detail and log.read_log() == []
 
 
+# -- the batches come from the same record, so a scheduled day needs nothing run by hand
+
+
+def types_pending(db):
+    return sorted(p.type for p in ProposalStore(db).list_by_status(PENDING))
+
+
+def test_the_job_also_proposes_the_tracker_and_risk_batches_from_the_same_record(seeded_db_path, outcomes, p1):
+    outcomes("2026-10-07", blockers=[evidence("m1", "The staging key was rotated and nobody was told.")], updates=[evidence("m2", "PM-016 is fixed.")])
+
+    result = run(MORNING, seeded_db_path, outcomes, p1)
+
+    assert types_pending(seeded_db_path) == ["channel_risk_entries", "channel_tracker_changes", "morning_brief_publish"]
+    assert "tracker: proposed" in result.batches and "risk: proposed" in result.batches
+
+
+def test_a_second_run_proposes_no_second_batch(seeded_db_path, outcomes, p1):
+    outcomes("2026-10-07", blockers=[evidence("m1", "The staging key was rotated and nobody was told.")])
+    run(MORNING, seeded_db_path, outcomes, p1)
+
+    again = run(MORNING, seeded_db_path, outcomes, p1)
+
+    assert types_pending(seeded_db_path).count("channel_tracker_changes") == 1 and "nothing new" in again.batches
+
+
+def test_a_record_with_nothing_to_turn_into_work_proposes_no_batches(seeded_db_path, outcomes, p1):
+    outcomes("2026-10-07", updates=[evidence("m1", "Pushed the change; all good.")])  # names no tracker item and is not a blocker
+
+    run(MORNING, seeded_db_path, outcomes, p1)
+
+    assert types_pending(seeded_db_path) == ["morning_brief_publish"]
+
+
+def test_the_batches_can_be_turned_off(seeded_db_path, outcomes, p1, monkeypatch):
+    monkeypatch.setenv("PM_CHANNEL_BATCHES", "0")
+    outcomes("2026-10-07", blockers=[evidence("m1", "The staging key was rotated and nobody was told.")])
+
+    result = run(MORNING, seeded_db_path, outcomes, p1)
+
+    assert result.batches == "off" and types_pending(seeded_db_path) == ["morning_brief_publish"]
+
+
+def test_a_failure_proposing_the_batches_does_not_take_the_brief_down(seeded_db_path, outcomes, p1, monkeypatch):
+    def broken(*a, **k):
+        raise RuntimeError("the consumer broke")
+
+    monkeypatch.setattr(job, "consume", broken)
+    outcomes("2026-10-07", blockers=[evidence("m1", "A blocker.")])
+
+    result = run(MORNING, seeded_db_path, outcomes, p1)
+
+    assert result.status == job.PROPOSED_FROM_RECORD and result.batches == "error" and types_pending(seeded_db_path) == ["morning_brief_publish"]
+
+
+def test_a_dry_run_proposes_no_batches_either(seeded_db_path, outcomes, p1):
+    outcomes("2026-10-07", blockers=[evidence("m1", "A blocker nobody mentioned an item for.")])
+
+    run(MORNING, seeded_db_path, outcomes, p1, dry_run=True)
+
+    assert types_pending(seeded_db_path) == []
+
+
 def test_the_card_for_a_channel_brief_is_the_ordinary_brief_card(seeded_db_path, outcomes, p1):
     from pm.approval import cards
 
     outcomes("2026-10-07", blockers=[evidence("m1", "A real blocker.")])
     proposal_id = run(MORNING, seeded_db_path, outcomes, p1).proposal_id
 
-    (approval,) = cards.handle_list_pending({}, db_path=seeded_db_path)["approvals"]
+    (approval,) = [a for a in cards.handle_list_pending({}, db_path=seeded_db_path)["approvals"] if a["type"] == "morning_brief_publish"]
 
     assert approval["proposal_id"] == proposal_id and [a["title"] for a in approval["card"]["actions"]] == ["Approve", "Reject"]
     assert "A real blocker." in json.dumps(approval["card"]) and CHANNEL in json.dumps(approval["card"])
@@ -655,4 +741,5 @@ def test_the_command_line_makes_the_brief_and_leaves_a_proposal(seeded_db_path, 
     assert script.main(["--channel", NAME, "--at", "2026-10-08T08:00", "--db", str(seeded_db_path)]) == 0
 
     out = capsys.readouterr().out
-    assert "A real blocker." in out and "proposal:" in out and len(ProposalStore(seeded_db_path).list_by_status(PENDING)) == 1
+    assert "A real blocker." in out and "proposal:" in out and "batches from the same record:" in out
+    assert [p.type for p in ProposalStore(seeded_db_path).list_by_status(PENDING)].count("morning_brief_publish") == 1

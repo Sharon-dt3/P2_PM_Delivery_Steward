@@ -86,7 +86,7 @@ def test_health_needs_no_key_and_says_what_is_configured_without_revealing_it(te
     assert body["status"] == "ok" and body["api_key_configured"] is True and KEY not in json.dumps(body)
 
 
-@pytest.mark.parametrize("path", ["/list_pending_approvals", "/card_action", "/get_decision_card", "/list_risks", "/explain_risk"])
+@pytest.mark.parametrize("path", ["/list_pending_approvals", "/claim_new_approvals", "/card_action", "/get_decision_card", "/list_risks", "/explain_risk"])
 def test_every_action_endpoint_refuses_a_missing_or_wrong_key(teams, path):
     assert teams.client.post(path, json={}, headers=headers(key=None)).status_code == 401
     assert teams.client.post(path, json={}, headers=headers(key="wrong")).status_code == 401
@@ -420,7 +420,7 @@ def test_the_actions_have_names_a_flow_author_can_read():
 
     operations = {path: (m.get("post") or m["get"]) for path, m in spec["paths"].items()}
     assert {path: op["operationId"] for path, op in operations.items()} == {
-        "/health": "Health", "/list_pending_approvals": "ListPendingApprovals", "/card_action": "CardAction",
+        "/health": "Health", "/list_pending_approvals": "ListPendingApprovals", "/claim_new_approvals": "ClaimNewApprovals", "/card_action": "CardAction",
         "/get_decision_card": "GetDecisionCard", "/list_risks": "ListRisks", "/explain_risk": "ExplainRisk",
     }
     assert all(op["summary"] and op["description"] for op in operations.values())

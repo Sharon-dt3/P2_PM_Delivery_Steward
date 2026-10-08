@@ -243,8 +243,7 @@ def _card_for(pending: PendingApproval) -> dict:
     return pending_proposal_only_card(pending)
 
 
-def handle_list_pending(request: dict, *, db_path: str | Path = DEFAULT_DB_PATH) -> dict:
-    """request: {} -- every proposal awaiting a decision, each with its card."""
+def _listed(approvals) -> dict:
     return {
         "approvals": [
             {
@@ -252,6 +251,19 @@ def handle_list_pending(request: dict, *, db_path: str | Path = DEFAULT_DB_PATH)
                 "local_date": p.local_date, "created_at": p.created_at, "summary": p.summary,
                 "card": _card_for(p),
             }
-            for p in service.list_pending_approvals(db_path=db_path)
+            for p in approvals
         ]
     }
+
+
+def handle_list_pending(request: dict, *, db_path: str | Path = DEFAULT_DB_PATH) -> dict:
+    """request: {} -- every proposal awaiting a decision, each with its card."""
+    return _listed(service.list_pending_approvals(db_path=db_path))
+
+
+def handle_claim_new(request: dict, *, db_path: str | Path = DEFAULT_DB_PATH) -> dict:
+    """request: {} -- only the pending proposals no card has been sent for yet (or whose card is old enough to remind about), each with its
+    card, and each recorded as handed out so the next call does not return it again (pm.approval.card_delivery)."""
+    from pm.approval.card_delivery import claim_new_approvals
+
+    return _listed(claim_new_approvals(db_path=db_path))

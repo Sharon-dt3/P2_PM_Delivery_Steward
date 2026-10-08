@@ -62,6 +62,7 @@ def main(argv: list[str] | None = None) -> int:
     if result.proposal_id:
         print(f"delivery: {result.delivery_status}: {result.delivery_detail}")
         print(f"proposal: {result.proposal_id}")
+        print(f"batches from the same record: {result.batches}")
     return 0 if result.status in ("proposed_from_record", "no_data", "skipped_non_working_day") else 1
 
 
