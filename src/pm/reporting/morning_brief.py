@@ -70,6 +70,7 @@ pm/seed/build.py's own comment on ASSIGNEES).
 
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Callable
 
@@ -80,7 +81,8 @@ from spine.grounding.kernel import (
     GroundingResult,
     ground_with_retry,
 )
-from spine.llm.structured import generate_structured
+from spine.llm.gateway import LLMGatewayError
+from spine.llm.structured import StructuredOutputError, generate_structured
 from spine.prompts.registry import PromptRegistry
 
 from pm.reporting.facts import MorningBriefFacts
@@ -555,6 +557,23 @@ def _failures_as_dicts(failures: list[GroundingFailure]) -> list[dict]:
     return [{"reason": f.reason, "detail": f.detail, "text": f.line.text} for f in failures]
 
 
+MODEL_FAILED = "model_failed"  # the `reason` of a failure that is the model's, not a line's: nothing was grounded because nothing usable came back
+logger = logging.getLogger("pm.reporting.morning_brief")
+
+
+def model_failure(exc: Exception, *, skipped: bool = False) -> GroundingFailure:
+    """A section the model could not write at all (rate-limited past every retry, or three malformed answers in a row). The section's facts are then shown as
+    recorded, exactly as when a line is dropped for good: a model that fails must not lose a fact that is true, and must not be replaced by a guess."""
+    detail = f"{type(exc).__name__}: {exc}"
+    return GroundingFailure(line=FactualLine(text="", message_id=None, quote=None), reason=MODEL_FAILED,
+                            detail=f"not tried again, the model was already unavailable in this run ({detail})" if skipped else detail)
+
+
+def sections_the_model_failed(dropped: dict[str, list[dict]]) -> list[str]:
+    """The sections that are shown as recorded because the model failed, in brief order."""
+    return [key for key, failures in dropped.items() if any(f.get("reason") == MODEL_FAILED for f in failures)]
+
+
 def generate_morning_brief(
     facts: MorningBriefFacts,
     gateway,
@@ -564,17 +583,29 @@ def generate_morning_brief(
     """Turns `facts` into a grounded MorningBrief via `gateway`. `facts`
     is never recomputed here -- this function's whole job is expression
     and grounding, not fact-gathering (see pm.reporting.facts for that
-    half of the split)."""
+    half of the split).
+
+    A model that fails does not take the brief down (PM-35). A section whose answers are malformed three times running, or that finds the model
+    unavailable, is shown as the recorded facts, marked; and once the gateway itself has failed (rate limits spent, no fallback), the sections after it
+    are not tried at all, so one outage costs one round of retries, not one per section."""
     registry = prompt_registry or PromptRegistry()
     prompt = registry.get(MORNING_BRIEF_CAPABILITY)
     section_facts = _section_facts(facts)
 
     sections: dict[str, list[FactualLine]] = {}
     dropped: dict[str, list[dict]] = {}
+    unavailable: Exception | None = None
     for section_key in SECTION_ORDER:
-        result = _generate_section_lines(
-            gateway, prompt, section_key, section_facts[section_key]
-        )
+        if section_facts[section_key] and unavailable is not None:
+            result = GroundingResult(failures=[model_failure(unavailable, skipped=True)])
+        else:
+            try:
+                result = _generate_section_lines(gateway, prompt, section_key, section_facts[section_key])
+            except (LLMGatewayError, StructuredOutputError) as exc:
+                logger.warning("morning_brief_section_failed section=%s error=%s: %s", section_key, type(exc).__name__, exc)
+                result = GroundingResult(failures=[model_failure(exc)])
+                if isinstance(exc, LLMGatewayError):
+                    unavailable = exc
         sections[section_key] = result.grounded_lines
         dropped[section_key] = _failures_as_dicts(result.failures)
 

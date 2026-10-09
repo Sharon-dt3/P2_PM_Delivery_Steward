@@ -51,7 +51,7 @@ from pm.jobs.proposal_flow import propose_for_approval
 from pm.jobs.snapshot_capture import capture_snapshot
 from pm.mirror.hook import mirrored
 from pm.reporting.facts import compute_morning_brief_facts
-from pm.reporting.morning_brief import MorningBrief, generate_morning_brief
+from pm.reporting.morning_brief import MorningBrief, generate_morning_brief, sections_the_model_failed
 from pm.risk.promotion_config import PromotionConfigError, load_promotion_policy
 from pm.risk.proposals import detect_and_propose
 from pm.risklog.hook import pull_lead_edits_if_enabled
@@ -123,7 +123,7 @@ def run_morning_brief_job(
         channel_id=config.channel_id,
         taken_at=taken_at,
         status=GENERATED,
-        detail="morning brief generated and grounded",
+        detail=_detail(brief),
         brief=brief,
         delivery_status=status,
         delivery_detail=detail,
@@ -132,6 +132,14 @@ def run_morning_brief_job(
         commitment_followups=commitment_followups,
         risk_log_sync=risk_log_sync,
     )
+
+
+def _detail(brief) -> str:
+    """What the job says about the brief it made: plain when the model wrote every section, and naming the sections shown as recorded when it could not."""
+    failed = sections_the_model_failed(brief.dropped)
+    if not failed:
+        return "morning brief generated and grounded"
+    return f"morning brief generated from the recorded facts; the model failed for {', '.join(failed)}, so those sections are shown as recorded"
 
 
 def _propose_risks(snapshot, gateway, db_path) -> int:

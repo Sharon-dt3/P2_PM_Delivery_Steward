@@ -16,12 +16,14 @@ With no facts to rephrase the model is not called. The model never sees or decid
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 
 from pydantic import BaseModel
 from spine.grounding.kernel import FactualLine, GroundingResult, ground_with_retry
-from spine.llm.structured import generate_structured
+from spine.llm.gateway import LLMGatewayError
+from spine.llm.structured import StructuredOutputError, generate_structured
 from spine.prompts.registry import PromptRegistry
 
 from pm.reporting.morning_brief import (
@@ -29,9 +31,11 @@ from pm.reporting.morning_brief import (
     MorningBriefSectionDraft,
     _check_line_content,
     _unsupported_words,
+    model_failure,
 )
 from pm.reporting.weekly import WeeklyFacts
 
+logger = logging.getLogger(__name__)
 NARRATIVE_CAPABILITY = "pm29_weekly_narrative"
 CLOSING_CAPABILITY = "pm29_weekly_closing"
 SECTION_LABEL = "What changed alongside the velocity"
@@ -169,7 +173,20 @@ def generate_narrative(facts: WeeklyFacts, gateway, *, prompt_registry: PromptRe
     if not items:
         return Narrative()
     registry = prompt_registry or PromptRegistry()
-    result = _generate_lines(gateway, registry.get(NARRATIVE_CAPABILITY), items)
-    closing, refusals = _generate_closing(gateway, registry.get(CLOSING_CAPABILITY), items)
+    # A model that fails (rate-limited past every retry, or malformed answers) does not take the report down (PM-35): the report is its quantities and the
+    # recorded facts, with no model prose and no closing sentence. The gateway failing once is not tried again for the closing.
+    try:
+        result = _generate_lines(gateway, registry.get(NARRATIVE_CAPABILITY), items)
+    except (LLMGatewayError, StructuredOutputError) as exc:
+        logger.warning("weekly_narrative_failed error=%s: %s", type(exc).__name__, exc)
+        result = GroundingResult(failures=[model_failure(exc)])
+        if isinstance(exc, LLMGatewayError):
+            dropped = [{"reason": f.reason, "detail": f.detail, "text": f.line.text} for f in result.failures]
+            return Narrative(lines=[], dropped=dropped, closing=None, closing_refusals=[], facts=items)
+    try:
+        closing, refusals = _generate_closing(gateway, registry.get(CLOSING_CAPABILITY), items)
+    except (LLMGatewayError, StructuredOutputError) as exc:
+        logger.warning("weekly_closing_failed error=%s: %s", type(exc).__name__, exc)
+        closing, refusals = None, [f"the model failed: {type(exc).__name__}"]
     dropped = [{"reason": f.reason, "detail": f.detail, "text": f.line.text} for f in result.failures]
     return Narrative(lines=result.grounded_lines, dropped=dropped, closing=closing, closing_refusals=refusals, facts=items)

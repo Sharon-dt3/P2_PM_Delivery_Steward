@@ -24,10 +24,10 @@ from zoneinfo import ZoneInfo
 from pydantic import BaseModel
 from spine.grounding.kernel import (
     FactualLine,
-    GroundingFailure,
     GroundingResult,
     ground_with_retry,
 )
+from spine.llm.gateway import LLMGatewayError
 from spine.llm.structured import generate_structured
 from spine.prompts.registry import PromptRegistry
 
@@ -45,6 +45,7 @@ from pm.reporting.morning_brief import (
     _check_line_content,
     _FactLine,
     _render_facts_block,
+    model_failure,
 )
 from pm.state.moments import parse_moment
 
@@ -89,14 +90,11 @@ def _section_lines(gateway, prompt, facts: EndOfDayFacts, key: str) -> Grounding
 
     try:
         return ground_with_retry(generate_fn, lookup, content_check=_check_line_content)
+    except LLMGatewayError:
+        raise  # the model is unavailable, not just wrong: the caller stops asking it for the other sections
     except Exception as exc:  # noqa: BLE001 - a model that fails must not lose a change that really happened
         logger.warning("eod_section_failed section=%s error=%s: %s", key, type(exc).__name__, exc)
-        return GroundingResult(failures=[_model_failure(exc)])
-
-
-def _model_failure(exc: Exception) -> GroundingFailure:
-    return GroundingFailure(line=FactualLine(text="", message_id=None, quote=None), reason="model_failed",
-                            detail=f"{type(exc).__name__}: {exc}")
+        return GroundingResult(failures=[model_failure(exc)])
 
 
 def _local_time(stamp: str, tz: str) -> str:
@@ -152,8 +150,17 @@ def generate_end_of_day_summary(
     prompt = (prompt_registry or PromptRegistry()).get(SUMMARY_CAPABILITY)
     sections: dict[str, list[FactualLine]] = {}
     dropped: dict[str, list[dict]] = {}
+    unavailable: LLMGatewayError | None = None
     for key in SECTION_ORDER:
-        result = _section_lines(gateway, prompt, facts, key)
+        if facts.sections[key] and unavailable is not None:
+            result = GroundingResult(failures=[model_failure(unavailable, skipped=True)])
+        else:
+            try:
+                result = _section_lines(gateway, prompt, facts, key)
+            except LLMGatewayError as exc:
+                logger.warning("eod_section_failed section=%s error=%s: %s", key, type(exc).__name__, exc)
+                result = GroundingResult(failures=[model_failure(exc)])
+                unavailable = exc
         sections[key] = result.grounded_lines
         dropped[key] = [{"reason": f.reason, "detail": f.detail, "text": f.line.text} for f in result.failures]
     return EndOfDaySummary(facts=facts, sections=sections, dropped=dropped, content=_render(facts, sections))
