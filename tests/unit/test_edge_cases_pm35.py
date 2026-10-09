@@ -141,6 +141,17 @@ def test_an_assigned_item_listed_as_unassigned_is_found(morning_day):
     assert any("PM-009 is listed as unassigned" in p for p in morning_problems(morning_day, content))
 
 
+def test_a_finished_item_listed_as_work_nobody_is_assigned_to_is_found(tmp_path):
+    db = edge.fresh_db(tmp_path)
+    edge.add_item(db, "PM-461", "Finished long ago", "done", [("in_progress", "done", "2026-09-10T09:00:00+00:00")], assignee=None)
+    day = edge.run_day(db)
+
+    assert "PM-461" not in day.brief.content.split("## Nobody is assigned", 1)[1].split("\n## ", 1)[0]  # the brief leaves it out
+    content = day.brief.content.replace("## Nobody is assigned\n", "## Nobody is assigned\n- PM-461 (Finished long ago): nobody is assigned; status done.\n", 1)
+
+    assert any("PM-461 is listed as work nobody is assigned to, but the snapshot has it done" in p for p in morning_problems(day, content))
+
+
 def test_a_commit_shown_as_tied_to_no_work_that_the_snapshot_ties_to_an_item_is_found(morning_day):
     tied = next(c for c in morning_day.morning.commits if c.item_ref)
     content = morning_day.brief.content.replace("## Commits with no item reference\n", f"## Commits with no item reference\n- {tied.sha[:7]}: {tied.message} (Wei Chen, 2026-09-16).\n", 1)

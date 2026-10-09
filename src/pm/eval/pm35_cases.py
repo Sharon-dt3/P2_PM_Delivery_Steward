@@ -150,6 +150,8 @@ def _nobody_line_problems(line: str, items: dict) -> list[str]:
     problems = []
     if item.assignee_id is not None:
         problems.append(f"{item.id} is listed as unassigned, but the snapshot has it assigned to {item.assignee_id}")
+    if item.status == "done":
+        problems.append(f"{item.id} is listed as work nobody is assigned to, but the snapshot has it done")
     stated = re.search(r"status (\w+)", line)
     if stated and stated[1] != item.status:
         problems.append(f"{item.id} is shown with status {stated[1]}, but the snapshot has {item.status}")
@@ -475,8 +477,6 @@ def scenario_unassigned_item() -> list[str]:
             for item_id in ("PM-342", "PM-343"):
                 if item_id not in listed:
                     problems.append(f"{item_id} has no owner and is missing from the unassigned section")
-            if "PM-341" in listed:
-                problems.append("PM-341 is finished and has no owner, and is listed as work nobody is assigned to")
         people_part = day.brief.content.split("## Nobody is assigned", 1)[0]
         for item_id in ("PM-341", "PM-342", "PM-343"):
             if item_id in people_part:
