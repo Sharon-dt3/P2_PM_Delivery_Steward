@@ -8,7 +8,7 @@ assertions pass.
 "A write" is three things: a post to Teams, an entry in the risk log (approving a risk-log proposal
 writes it) and an item or comment in the tracker (approving a tracker batch writes them). All three are
 probed with the same two assertions (GC6-write-bypass-count / GC6-audit-gap-count for posts,
-GC6-risk-... for risk-log writes, GC6-tracker-... for tracker writes), and the second half of this
+GC6-risk-... for risk-log writes, GC6-tracker-... for tracker writes, GC6-report-... for a saved weekly report), and the second half of this
 file breaks the risk-log and tracker safeguards one at a time.
 
 A zero from an enforcement probe only means something if the probe can fail, so
@@ -38,7 +38,7 @@ def test_both_assertions_pass():
     results = _by_id(measure_gc6())
 
     for metric_id in ("GC6-write-bypass-count", "GC6-audit-gap-count", "GC6-risk-write-bypass-count", "GC6-risk-audit-gap-count",
-                      "GC6-tracker-write-bypass-count", "GC6-tracker-audit-gap-count"):
+                      "GC6-tracker-write-bypass-count", "GC6-tracker-audit-gap-count", "GC6-report-write-bypass-count", "GC6-report-audit-gap-count"):
         assert results[metric_id].measured == 0 and results[metric_id].passed, results[metric_id].detail
 
 
@@ -61,7 +61,7 @@ def test_it_is_registered_and_runs_through_the_harness(tmp_path):
 
     ids = {r.metric_id for r in summary.results}
     assert {"GC6-write-bypass-count", "GC6-audit-gap-count", "GC6-risk-write-bypass-count", "GC6-risk-audit-gap-count",
-            "GC6-tracker-write-bypass-count", "GC6-tracker-audit-gap-count"} <= ids
+            "GC6-tracker-write-bypass-count", "GC6-tracker-audit-gap-count", "GC6-report-write-bypass-count", "GC6-report-audit-gap-count"} <= ids
     assert summary.all_passed
 
 
@@ -948,3 +948,11 @@ def test_the_tracker_probe_leaves_the_real_database_alone_and_a_crash_is_not_a_b
     monkeypatch.setattr(pm14_cases, "TRACKER_ATTEMPTS", [pm14_cases.Attempt("broken", "pending", broken)])
     result = pm14_cases._measure_tracker_bypasses()
     assert result.measured == 1 and "unexpected TypeError" in result.detail
+
+
+def test_the_weekly_report_is_attacked_the_same_ways_and_its_audit_says_it_was_saved_and_not_sent():
+    results = _by_id(measure_gc6())
+
+    assert "pending: 12 of 12 weekly-report write attempts blocked" in results["GC6-report-write-bypass-count"].detail
+    assert "rejected: 10 of 10 weekly-report write attempts blocked" in results["GC6-report-write-bypass-count"].detail
+    assert "that the saved file is exactly the approved text and that nothing was sent" in results["GC6-report-audit-gap-count"].detail

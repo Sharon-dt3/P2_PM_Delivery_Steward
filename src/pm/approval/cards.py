@@ -23,7 +23,6 @@ from pm.approval.proposals import (
     EOD_PROPOSAL_TYPE,
     ESCALATION_PROPOSAL_TYPE,
     NUDGE_PROPOSAL_TYPE,
-    WEEKLY_REPORT_PROPOSAL_TYPE,
 )
 from pm.approval.risk_apply import DEFAULT_SEVERITY
 from pm.approval.service import ActionResult, ApprovalPolicy, PendingApproval
@@ -117,6 +116,29 @@ def pending_risk_card(pending: PendingApproval) -> dict:
     )
 
 
+def pending_report_card(pending: PendingApproval) -> dict:
+    """The card for a weekly status report: the whole report, then Approve (saves it as the final version: the agent never sends it, so you send it
+    yourself) and Reject. No edit box: a figure changed by hand would no longer recompute from the snapshots."""
+    return _card(
+        [
+            _text(pending.summary, size="Large", weight="Bolder"),
+            _text(pending.content, fontType="Monospace"),
+            _text("Approving saves this report as the final version, exactly as shown. The agent never sends it: you send it yourself. "
+                  "It cannot be edited here, because a changed figure would no longer recompute from the snapshots.", isSubtle=True),
+        ],
+        [
+            {
+                "type": "Action.Submit", "title": "Approve", "style": "positive", "associatedInputs": "none",
+                "data": {"action": "approve", "proposal_id": pending.proposal_id},
+            },
+            {
+                "type": "Action.Submit", "title": "Reject", "style": "destructive", "associatedInputs": "none",
+                "data": {"action": "reject", "proposal_id": pending.proposal_id},
+            },
+        ],
+    )
+
+
 def pending_tracker_card(pending: PendingApproval) -> dict:
     """The card for a batch of tracker changes: the whole list, each item with the channel message it came from and its full line (the
     title is clipped), then Approve (creates the items and adds the comments in the tracker) and Reject. No edit box, no severity."""
@@ -140,19 +162,13 @@ def pending_tracker_card(pending: PendingApproval) -> dict:
     )
 
 
-def _proposal_only_note(pending: PendingApproval) -> str:
-    if pending.type == WEEKLY_REPORT_PROPOSAL_TYPE:
-        return "This is a draft for you to read. The agent never sends it, so there is nothing to approve: you can only reject it."
-    return "Applying an approved proposal of this kind is not built yet: it can only be rejected."
-
-
 def pending_proposal_only_card(pending: PendingApproval) -> dict:
     """The card for a proposal that can be read and rejected but not carried out (a type nothing applies yet): no Approve, no edit box."""
     return _card(
         [
             _text(pending.summary, size="Large", weight="Bolder"),
             _text(pending.content, fontType="Monospace"),
-            _text(_proposal_only_note(pending), isSubtle=True),
+            _text("Applying an approved proposal of this kind is not built yet: it can only be rejected.", isSubtle=True),
         ],
         [
             {
@@ -169,10 +185,13 @@ def decision_card(trail: AuditTrail) -> dict:
     verb = {"rejected": "Rejected"}.get(trail.status, "Approved")
     writes_risk_log = trail.type in service.RISK_WRITE_TYPES
     writes_tracker = trail.type in service.TRACKER_WRITE_TYPES
+    saves_report = trail.type in service.REPORT_WRITE_TYPES
     label = {EOD_PROPOSAL_TYPE: "End-of-day summary", NUDGE_PROPOSAL_TYPE: "Reminder", ESCALATION_PROPOSAL_TYPE: "Escalation"}.get(
-        trail.type, "Tracker changes" if writes_tracker else "Risk-log proposal" if writes_risk_log else "Morning brief"
+        trail.type, "Weekly report" if saves_report else "Tracker changes" if writes_tracker else "Risk-log proposal" if writes_risk_log else "Morning brief"
     )
-    if writes_tracker:
+    if saves_report:
+        outcome = {"title": "Saved as the final report (not sent)", "value": trail.sent["target"] if trail.sent else "not saved"}
+    elif writes_tracker:
         outcome = {"title": "Written to the tracker", "value": trail.sent["target"] if trail.sent else "not written"}
     elif writes_risk_log:
         outcome = {"title": "Written to the risk log as", "value": trail.sent["target"] if trail.sent else "not written"}
@@ -247,6 +266,8 @@ def _card_for(pending: PendingApproval) -> dict:
         return pending_risk_card(pending)
     if pending.type in service.TRACKER_WRITE_TYPES:
         return pending_tracker_card(pending)
+    if pending.type in service.REPORT_WRITE_TYPES:
+        return pending_report_card(pending)
     return pending_proposal_only_card(pending)
 
 

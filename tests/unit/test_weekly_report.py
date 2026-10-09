@@ -14,8 +14,7 @@ from datetime import datetime, timezone
 import pytest
 from spine.approval.proposals import ProposalStore
 
-from pm.approval import cards, service
-from pm.approval.audit import audit_trail
+from pm.approval import service
 from pm.approval.proposals import WEEKLY_REPORT_PROPOSAL_TYPE
 from pm.jobs import weekly_report_job as job
 from pm.reporting.weekly import compute_weekly_facts, render_weekly_report
@@ -186,19 +185,6 @@ def test_the_job_stores_three_snapshots_and_offers_one_proposal_per_week(seeded_
         assert read_snapshot(taken_at, seeded_db_path).taken_at == taken_at  # each is stored, and readable on its own
 
 
-def test_the_report_is_for_reading_and_rejecting_only_and_is_never_sent(seeded_db_path):
-    made = job.run_weekly_report_job(FRIDAY, db_path=seeded_db_path, timezone_name=TZ)
-    policy = service.ApprovalPolicy(approver_ids=frozenset({"sharon"}))
-
-    card = next(a for a in cards.handle_list_pending({}, db_path=seeded_db_path)["approvals"] if a["proposal_id"] == made.proposal_id)["card"]
-    attempt = service.approve_and_send(made.proposal_id, approver_id="sharon", policy=policy, db_path=seeded_db_path)
-
-    assert [b["title"] for b in card["actions"]] == ["Reject"]
-    assert attempt.outcome == service.REFUSED and "cannot be approved" in attempt.detail
-    assert ProposalStore(seeded_db_path).get(made.proposal_id).status == "pending"
-    assert "proposal.created" in [e["action"] for e in audit_trail(made.proposal_id, db_path=seeded_db_path).events]
-
-
 def test_it_can_be_rejected_and_the_rejection_is_recorded(seeded_db_path):
     made = job.run_weekly_report_job(FRIDAY, db_path=seeded_db_path, timezone_name=TZ)
 
@@ -244,14 +230,3 @@ def test_digits_inside_a_title_quoted_from_the_tracker_or_risk_log_are_not_figur
     assert "P5 uses 55 graph ids while P9 has 77 of its own" in text
     assert check_report(facts, text, end, start, previous) == []
     assert unexplained_numbers(facts, text + "\nIn short: up 99%.") == {99}  # a number outside the quoted title is still caught
-
-
-def test_the_weekly_reports_card_says_it_is_a_draft_never_sent_not_that_approving_is_unbuilt(seeded_db_path):
-    made = job.run_weekly_report_job(FRIDAY, db_path=seeded_db_path, timezone_name=TZ)
-
-    card = next(a for a in cards.handle_list_pending({}, db_path=seeded_db_path)["approvals"] if a["proposal_id"] == made.proposal_id)["card"]
-    notes = [e["text"] for e in card["body"] if e.get("isSubtle")]
-
-    assert notes == ["This is a draft for you to read. The agent never sends it, so there is nothing to approve: you can only reject it."]
-    assert "not built yet" not in " ".join(notes)
-    assert any("Weekly status report, week ending 2026-09-18" in e["text"] for e in card["body"])  # the report itself is on the card

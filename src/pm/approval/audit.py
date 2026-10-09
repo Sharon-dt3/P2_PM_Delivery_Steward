@@ -21,6 +21,7 @@ from pm.storage.db import DEFAULT_DB_PATH, get_connection
 
 RISK_WRITE_TYPES = frozenset({"risk_log_entry", "channel_risk_entries"})  # the proposal types approving which writes to the risk log
 TRACKER_WRITE_TYPES = frozenset({"channel_tracker_changes"})  # ...and the one that writes to the tracker
+REPORT_WRITE_TYPES = frozenset({"weekly_status_report"})  # ...and the one that saves an approved report to a file (it is never sent)
 
 AGENT = "agent"  # the actor recorded for things the system itself does
 AUTO_APPROVER = "system:auto-approve"  # the actor recorded when the system approves (see pm.approval.service)
@@ -146,8 +147,12 @@ def describe(trail: AuditTrail) -> str:
             how = (f" Severity {rating['severity']} ({'chosen by the approver' if rating.get('severity_source') == 'approver' else 'the default: nobody rated it'})."
                    if rating.get("severity") else "")
             lines.append(f"Written to the risk log as {trail.sent['target']} at {trail.sent['created_at']}.{how}")
+        elif trail.sent and trail.type in REPORT_WRITE_TYPES:
+            lines.append(f"Saved as the final report at {trail.sent['created_at']}: {trail.sent['target']}. It was not sent anywhere: the agent never sends it.")
         elif trail.sent:
             lines.append(f"Sent to {trail.sent['target']} at {trail.sent['created_at']}.")
+        elif trail.type in REPORT_WRITE_TYPES:
+            lines.append("Not saved yet.")
         elif trail.type in TRACKER_WRITE_TYPES:
             lines.append("Not written to the tracker yet.")
         else:

@@ -40,6 +40,9 @@ def _pending(policy, acting_as, db_path) -> None:
         if item.type in service.TRACKER_WRITE_TYPES:
             _pending_tracker_changes(item, policy, acting_as, db_path)
             continue
+        if item.type in service.REPORT_WRITE_TYPES:
+            _pending_report(item, policy, acting_as, db_path)
+            continue
         if item.type not in service.MESSAGE_TYPES:
             _pending_proposal_only(item, policy, acting_as, db_path)
             continue
@@ -120,6 +123,27 @@ def _pending_tracker_changes(item, policy, acting_as, db_path) -> None:
                 _done("warning", result)
 
 
+def _pending_report(item, policy, acting_as, db_path) -> None:
+    """A weekly status report: Approve saves it as the final version (the agent never sends it: you do). Approved as proposed or rejected: no
+    edit box, because a figure changed by hand would no longer recompute from the snapshots."""
+    with st.container(border=True):
+        st.subheader(item.summary)
+        created = item.created_at.split(".")[0].replace("T", " ") + " UTC"
+        st.caption(f"proposal {item.proposal_id[:8]}… · proposed {created} · {item.type}")
+        st.caption("Approving saves this report as the final version, exactly as shown. Nothing is sent: you send it yourself. Auto-approve never takes one.")
+        with st.expander("The report", expanded=True):
+            st.text(item.content)
+        reason = st.text_input("Reason, if rejecting (optional)", key=f"reason_{item.proposal_id}")
+        approve_col, reject_col = st.columns(2)
+        if acting_as:
+            if approve_col.button("Approve", key=f"approve_{item.proposal_id}", type="primary"):
+                result = service.approve_and_send(item.proposal_id, approver_id=acting_as, policy=policy, db_path=db_path)
+                _done("success" if result.outcome == service.APPLIED_OUTCOME else "warning", result)
+            if reject_col.button("Reject", key=f"reject_{item.proposal_id}"):
+                result = service.reject(item.proposal_id, approver_id=acting_as, reason=reason or None, policy=policy, db_path=db_path)
+                _done("warning", result)
+
+
 def _pending_proposal_only(item, policy, acting_as, db_path) -> None:
     """A proposal this service can show and reject but not carry out (a type nothing applies yet): no Approve and no edit box."""
     with st.container(border=True):
@@ -148,6 +172,7 @@ def _unsent(policy, acting_as, db_path) -> None:
     for proposal in unsent:
         with st.container(border=True):
             where = ("the risk log" if proposal.type in service.RISK_WRITE_TYPES else "the tracker" if proposal.type in service.TRACKER_WRITE_TYPES
+                     else "a saved report file" if proposal.type in service.REPORT_WRITE_TYPES
                      else channel_name(proposal.payload.get("target_channel", "?"), p1_db_path()))
             st.write(f"{proposal.payload.get('local_date', '?')} → {where} · approved by {proposal.approver_id}")
             if acting_as and st.button("Retry", key=f"retry_{proposal.id}"):

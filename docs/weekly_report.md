@@ -1,7 +1,7 @@
 # The weekly status report (PM-29, PM-30)
 
 A client-facing **draft**, made from three stored project snapshots taken seven days apart (`end`, `start` a week before, `previous` a week before that).
-The agent **never sends it**: it is offered as a proposal that can be read and rejected, and nothing carries it out.
+The agent **never sends it**. It is offered as a proposal; **approving it saves it as the final version** (see "Approving"), and a person sends it.
 
 **Python computes every quantity; the Claude API writes the narrative** (the plan's split for PM-29, the same one as P1's weekly roll-up: "rates and trends
 are computed, never estimated by a model; the narrative is the only generated part"). The week window and the trend (this week minus the week before, by the
@@ -44,7 +44,21 @@ and a report that does not recompute is never offered as a proposal: the problem
 
 ## The proposal
 
-Type `weekly_status_report`, one per week ending (idempotent). Its card in Teams has **Reject only**; approving it is refused ("nothing carries it out").
+Type `weekly_status_report`, one per week ending (idempotent). Its card in Teams has **Approve** and **Reject**.
+
+## Approving
+
+The plan says the agent never sends the report, so approving it means **"this is the version I will send"**:
+
+- **Approve** saves the text, exactly as proposed, to `data/reports/weekly/weekly_report_<week ending>.md` (`PM_REPORTS_DIR` moves the folder), through the
+  same write gate as every other write (`guarded_send` refuses anything not approved). **Nothing is sent anywhere**; the audit says so
+  (`proposal.applied` with `target: report_file`, the path and `sent: false`), and so does the decision card.
+- **No edit box**: a figure changed by hand would no longer recompute from the snapshots (PM-30), so the report is approved as proposed or rejected.
+- **Refused before it is recorded** (the proposal stays pending) when the file for that week already holds *different* text (never overwritten), or the
+  report has no valid week ending or no text. Saving the same text again changes nothing. A failed save leaves it approved, and a retry saves it once.
+- **Auto-approve never takes it.** Only a person approves a report.
+- GC6 covers it like every other write: `GC6-report-write-bypass-count` (22 attempts against pending and rejected reports) and
+  `GC6-report-audit-gap-count` (approved and rejected, including that the saved file is exactly the approved text and that nothing was sent).
 
 ## On a schedule
 

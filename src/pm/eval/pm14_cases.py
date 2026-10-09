@@ -60,7 +60,7 @@ from pm.adapters.tracker import TrackerItem, TrackerMock
 from pm.approval import service
 from pm.approval.audit import AUTO_APPROVER, audit_trail
 from pm.approval.cards import handle_card_action
-from pm.approval.proposals import format_brief_message
+from pm.approval.proposals import format_brief_message, propose_weekly_report
 from pm.approval.service import ApprovalPolicy
 from pm.channel.batches import TrackerView, consume
 from pm.eval.pm12_cases import ScriptedGateway
@@ -449,6 +449,8 @@ RISK_BYPASS_ID = "GC6-risk-write-bypass-count"
 RISK_AUDIT_ID = "GC6-risk-audit-gap-count"
 TRACKER_BYPASS_ID = "GC6-tracker-write-bypass-count"
 TRACKER_AUDIT_ID = "GC6-tracker-audit-gap-count"
+REPORT_BYPASS_ID = "GC6-report-write-bypass-count"
+REPORT_AUDIT_ID = "GC6-report-audit-gap-count"
 RISK_ENTRY_COLUMNS = "id, title, description, severity, status, related_item_id, opened_at, owner"
 
 
@@ -466,6 +468,20 @@ def _risk_log_at(path: Path):
             os.environ["PM_RISK_LOG_CSV"] = previous
 
 
+@contextmanager
+def _reports_at(path: Path):
+    """Real code saves an approved weekly report under PM_REPORTS_DIR at call time; point it at the probe's own folder and put it back."""
+    previous = os.environ.get("PM_REPORTS_DIR")
+    os.environ["PM_REPORTS_DIR"] = str(path)
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("PM_REPORTS_DIR", None)
+        else:
+            os.environ["PM_REPORTS_DIR"] = previous
+
+
 class _RiskWorld(_World):
     """A throwaway database AND risk log (the seed's three risks in both), and a way to make a fresh risk-log proposal with the real
     consumer of a channel outcome record: every call is a different record, so no two proposals merge."""
@@ -476,6 +492,7 @@ class _RiskWorld(_World):
         self.risk_csv = directory / "gc6_risks.csv"
         CsvRiskLog(self.risk_csv).replace_all([Risk(**r) for r in RISKS])
         self.seed_ids = {r["id"] for r in RISKS}
+        self.reports_dir = directory / "reports"
         self._records = 0
 
     def propose_risk(self, named_item: str | None = None) -> str:
@@ -508,8 +525,19 @@ class _RiskWorld(_World):
     def tracker_rows(self) -> tuple:
         return (tuple(self.sql("SELECT * FROM items ORDER BY id")), tuple(self.sql("SELECT * FROM item_comments ORDER BY id")))
 
+    def report_files(self) -> tuple:
+        folder = self.reports_dir / "weekly"
+        return tuple(sorted((p.name, p.read_bytes()) for p in folder.iterdir())) if folder.exists() else ()
+
     def state(self, proposal_id: str) -> tuple:
-        return (self.row(proposal_id), self.risk_csv.read_bytes(), tuple(self.runtime_rows()), self.tracker_rows())
+        return (self.row(proposal_id), self.risk_csv.read_bytes(), tuple(self.runtime_rows()), self.tracker_rows(), self.report_files())
+
+    def propose_report(self) -> str:
+        """A fresh weekly-report proposal: every call a different week ending, so no two proposals merge."""
+        self._records += 1
+        week_ending = f"2026-09-{self._records:02d}"
+        self.last_report_text = f"Weekly status report, week ending {week_ending}. Completed this week: {self._records} items."
+        return propose_weekly_report(text=self.last_report_text, figures=[], snapshots={"end": f"e{self._records}"}, week_ending=week_ending, db_path=self.db)[0].id
 
     def propose_tracker(self, comment_text: str | None = None) -> str:
         """A fresh tracker-changes proposal from the real consumer: one comment on PM-016 and one new item (a blocker naming none)."""
@@ -570,6 +598,22 @@ def _rewrite_tracker_payload(c: _RiskCase) -> None:
     ProposalStore(c.db).refresh_payload(c.proposal_id, payload=payload)
 
 
+def _report_guarded_send(c: _RiskCase) -> None:
+    folder = c.world.reports_dir / "weekly"
+
+    def forge():
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "weekly_report_forged.md").write_text("forged\n", encoding="utf-8")
+
+    guarded_send(c.proposal_id, action_type="report_save", target="forged", send_fn=forge, db_path=c.db)
+
+
+def _rewrite_report_payload(c: _RiskCase) -> None:
+    payload = json.loads(c.world.row(c.proposal_id)[1])
+    payload["content"] = "tampered after the decision"
+    ProposalStore(c.db).refresh_payload(c.proposal_id, payload=payload)
+
+
 def _rewrite_risk_payload(c: _RiskCase) -> None:
     payload = json.loads(c.world.row(c.proposal_id)[1])
     payload["items"] = [{**payload["items"][0], "title": "tampered after the decision"}]
@@ -611,11 +655,18 @@ TRACKER_ATTEMPTS: list[Attempt] = [
 ]
 
 
+REPORT_ATTEMPTS: list[Attempt] = [
+    Attempt(a.name, a.state, _report_guarded_send if a.run is _risk_guarded_send else _rewrite_report_payload
+            if a.run is _rewrite_risk_payload else a.run)
+    for a in RISK_ATTEMPTS
+]
+
+
 def _try_batch(attempt: Attempt, propose: str) -> tuple[bool, str]:
     """(did a write land or did the attempt end unexpectedly, how it ended), on a fresh database, risk log and tracker."""
     with tempfile.TemporaryDirectory(prefix="pm_gc6_risk_") as tmp:
         world = _RiskWorld(Path(tmp))
-        with _risk_log_at(world.risk_csv):
+        with _risk_log_at(world.risk_csv), _reports_at(world.reports_dir):
             proposal_id = getattr(world, propose)()
             if attempt.state == "rejected":
                 service.reject(proposal_id, approver_id=APPROVER, reason="gc6", policy=POLICY, db_path=world.db)
@@ -657,6 +708,83 @@ def _measure_risk_bypasses() -> MetricResult:
 
 def _measure_tracker_bypasses() -> MetricResult:
     return _measure_batch_bypasses(TRACKER_ATTEMPTS, "propose_tracker", TRACKER_BYPASS_ID, "tracker")
+
+
+def _measure_report_bypasses() -> MetricResult:
+    return _measure_batch_bypasses(REPORT_ATTEMPTS, "propose_report", REPORT_BYPASS_ID, "weekly-report")
+
+
+def _check_report_decision(world: _RiskWorld, label: str, proposal_id: str, *, approver: str, window: tuple[datetime, datetime], approved: bool) -> list[str]:
+    """Read the raw rows and the saved file for one decided weekly report and report every field that is missing or wrong."""
+    gaps: list[str] = []
+    status, payload_json, approver_id, decided_at = world.row(proposal_id)
+    payload = json.loads(payload_json)
+    original = json.loads(world.sql("SELECT original_model_output FROM proposals WHERE id = ?", proposal_id)[0][0]).get("content")
+    action = "proposal.approved" if approved else "proposal.rejected"
+    events = world.sql("SELECT actor, action, details, created_at FROM audit WHERE entity_type = 'proposal' AND entity_id = ? ORDER BY id", proposal_id)
+    decision = next((e for e in events if e[1] == action), None)
+    sent = world.sql("SELECT action_type, target FROM write_log WHERE proposal_id = ? AND status = 'sent' ORDER BY id", proposal_id)
+    files = world.report_files()
+
+    if approver_id != approver:
+        gaps.append(f"{label}: approver is {approver_id!r}, expected {approver!r}")
+    if decision is None or decision[0] != approver:
+        gaps.append(f"{label}: approver not in the audit record ({action})")
+    if not _within(decided_at, window):
+        gaps.append(f"{label}: timestamp {decided_at!r} missing or outside the decision window")
+    if decision is None or not _within(decision[3], window):
+        gaps.append(f"{label}: timestamp not in the audit record")
+    if original != world.last_report_text:
+        gaps.append(f"{label}: original text is not what the agent proposed")
+    if world.spy.calls or world.spy.outbound_lines():
+        gaps.append(f"{label}: a weekly-report decision sent something: the agent never sends it")
+    if not approved:
+        if sent or status == "applied" or files:
+            gaps.append(f"{label}: something was saved for a rejected report")
+        if payload.get("content") != original:
+            gaps.append(f"{label}: applied text changed on a rejected report")
+    else:
+        applied = next((e for e in events if e[1] == "proposal.applied"), None)
+        details = json.loads(applied[2]) if applied else {}
+        if status != "applied":
+            gaps.append(f"{label}: the proposal is {status!r}, not applied")
+        if len(files) != 1 or files[0][1] != (original.rstrip("\n") + "\n").encode():
+            gaps.append(f"{label}: the saved file is not exactly the approved text ({[f[0] for f in files]})")
+        elif sent != [("report_save", str(world.reports_dir / "weekly" / files[0][0]))]:
+            gaps.append(f"{label}: the write log does not record where it was saved ({sent})")
+        if applied is None or applied[0] != approver or details.get("sent") is not False or details.get("path") != (sent[0][1] if sent else None):
+            gaps.append(f"{label}: the audit record does not say who saved it, where, and that it was not sent")
+        if payload.get("content") != original:
+            gaps.append(f"{label}: applied text differs from the proposed text without an edit being recorded")
+    trail = audit_trail(proposal_id, db_path=world.db)  # the app's own view must agree with the raw rows
+    if (trail.approver_id, trail.decided_at, trail.original_proposal.get("content")) != (approver_id, decided_at, original):
+        gaps.append(f"{label}: the application's audit trail disagrees with the raw rows")
+    return gaps
+
+
+def _measure_report_audit() -> MetricResult:
+    gaps: list[str] = []
+    for label, approved in (("approved", True), ("rejected", False)):
+        with tempfile.TemporaryDirectory(prefix="pm_gc6_report_audit_") as tmp:
+            world = _RiskWorld(Path(tmp))
+            with _risk_log_at(world.risk_csv), _reports_at(world.reports_dir):
+                pid = world.propose_report()
+                moment = datetime.now(timezone.utc)
+                if approved:
+                    service.approve_and_send(pid, approver_id=APPROVER, publisher=world.spy, policy=POLICY, db_path=world.db)
+                else:
+                    service.reject(pid, approver_id=APPROVER, reason="gc6", policy=POLICY, db_path=world.db)
+                gaps += _check_report_decision(world, label, pid, approver=APPROVER, window=(moment, datetime.now(timezone.utc)), approved=approved)
+    return MetricResult(
+        metric_id=REPORT_AUDIT_ID,
+        name="audit-record fields missing or wrong across two decided weekly reports (hard zero)",
+        measured=len(gaps), target=0, comparator_name="at_most", passed=at_most(len(gaps), 0),
+        detail=(
+            "checked approver, timestamp, original text, that the saved file is exactly the approved text and that nothing was sent (the write log, "
+            "the audit record saying where and that it was not sent) for: approved, rejected"
+            + (f"; first gap: {gaps[0]}" if gaps else "")
+        ),
+    )
 
 
 def _check_risk_decision(
@@ -876,14 +1004,15 @@ def measure_gc6() -> list[MetricResult]:
     with tempfile.TemporaryDirectory(prefix="pm_gc6_") as tmp:
         world = _World(Path(tmp))
         messages = [_measure_bypasses(world), _measure_audit(world)]
-    return [*messages, _measure_risk_bypasses(), _measure_risk_audit(), _measure_tracker_bypasses(), _measure_tracker_audit()]
+    return [*messages, _measure_risk_bypasses(), _measure_risk_audit(), _measure_tracker_bypasses(), _measure_tracker_audit(),
+            _measure_report_bypasses(), _measure_report_audit()]
 
 
 def register(registry: GoldenCaseRegistry) -> None:
     registry.register(
         GoldenCase(
             case_id="GC6",
-            description="Approval enforcement: writes (a post, or a risk-log entry) on pending/rejected proposals fail; the audit record is complete",
+            description="Approval enforcement: writes (a post, a risk-log entry, a tracker batch, a saved weekly report) on pending/rejected proposals fail; the audit record is complete",
             measure_fn=measure_gc6,
         )
     )

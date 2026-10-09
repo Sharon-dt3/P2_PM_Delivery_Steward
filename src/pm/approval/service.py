@@ -43,7 +43,7 @@ from spine.approval.write_guard import WriteRefusedError, guarded_send
 from pm.adapters.risk_log import RiskLogStore
 from pm.adapters.teams import get_teams_publisher
 from pm.adapters.tracker import Tracker, TrackerMock
-from pm.approval import risk_apply, tracker_apply
+from pm.approval import report_apply, risk_apply, tracker_apply
 from pm.approval.audit import AGENT, AUTO_APPROVER, write_audit
 from pm.approval.proposals import (
     BRIEF_PROPOSAL_TYPE,
@@ -68,7 +68,8 @@ from pm.storage.db import DEFAULT_DB_PATH
 MESSAGE_TYPES = frozenset({BRIEF_PROPOSAL_TYPE, EOD_PROPOSAL_TYPE}) | DIRECT_MESSAGE_TYPES
 RISK_WRITE_TYPES = risk_apply.RISK_WRITE_TYPES
 TRACKER_WRITE_TYPES = tracker_apply.TRACKER_WRITE_TYPES
-EXECUTABLE_TYPES = MESSAGE_TYPES | RISK_WRITE_TYPES | TRACKER_WRITE_TYPES
+REPORT_WRITE_TYPES = report_apply.REPORT_WRITE_TYPES  # a weekly report: approving SAVES the final version, nothing is sent
+EXECUTABLE_TYPES = MESSAGE_TYPES | RISK_WRITE_TYPES | TRACKER_WRITE_TYPES | REPORT_WRITE_TYPES
 CHANNEL_BATCH_TYPES = frozenset({CHANNEL_TRACKER_PROPOSAL_TYPE, CHANNEL_RISK_PROPOSAL_TYPE})  # PM-26: batches from P1's outcome record
 
 SENT = "sent"
@@ -264,6 +265,8 @@ def approve_and_send(
         )
     if proposal.type in TRACKER_WRITE_TYPES:  # writes to the tracker, posts nothing; a severity means nothing here and is ignored
         return _approve_tracker_changes(proposal, approver=approver, edited_content=edited_content, tracker=tracker, store=store, db_path=db_path)
+    if proposal.type in REPORT_WRITE_TYPES:  # saves the report as the final version, posts nothing
+        return _approve_report(proposal, approver=approver, edited_content=edited_content, store=store, db_path=db_path)
     if publisher_problem:
         return ActionResult(proposal_id, REFUSED, publisher_problem)
 
@@ -348,6 +351,24 @@ def _approve_tracker_changes(
     return _execute(pid, actor=approver, publisher=None, policy=None, store=store, db_path=db_path, tracker=tracker)
 
 
+def _approve_report(proposal: Proposal, *, approver: str, edited_content: str | None, store: ProposalStore, db_path) -> ActionResult:
+    """Approve a weekly report: check it can be saved BEFORE approving, record the approval, then save it. A refusal is audited and leaves the
+    proposal pending. It is approved as proposed or not at all: an edited figure would no longer recompute from the snapshots."""
+    pid = proposal.id
+    if edited_content and _normalise(edited_content) and _normalise(edited_content) != _normalise(proposal.payload.get("content", "")):
+        return _deny(db_path, approver, pid, "approve", "a weekly report cannot be edited here (a changed figure would no longer recompute): approve it as proposed, or reject it")
+    try:
+        report_apply.plan_save(proposal)
+    except report_apply.ReportApplyRefused as exc:
+        return _deny(db_path, approver, pid, "approve", str(exc))
+    try:
+        store.approve(pid, approver_id=approver)
+    except IllegalTransitionError as exc:
+        return ActionResult(pid, REFUSED, str(exc))
+    write_audit(db_path, actor=approver, action="proposal.approved", proposal_id=pid, details={"edited": False})
+    return _execute(pid, actor=approver, publisher=None, policy=None, store=store, db_path=db_path)
+
+
 def approve_automatically(
     proposal_id: str, *, reason: str, store: ProposalStore | None = None, db_path: str | Path = DEFAULT_DB_PATH,
 ) -> None:
@@ -406,7 +427,7 @@ def send_approved(
         wanted = store.get(proposal_id)
     except ProposalNotFoundError:
         wanted = None
-    if wanted is not None and wanted.type in RISK_WRITE_TYPES | TRACKER_WRITE_TYPES:  # a retry of a risk-log or tracker write posts nothing
+    if wanted is not None and wanted.type in RISK_WRITE_TYPES | TRACKER_WRITE_TYPES | REPORT_WRITE_TYPES:  # a retry of a write posts nothing
         return _execute(proposal_id, actor=AGENT, publisher=None, policy=policy, store=store, db_path=db_path, risk_log=risk_log, tracker=tracker)
     try:
         publisher = publisher if publisher is not None else get_teams_publisher()
@@ -511,6 +532,27 @@ def _execute_tracker_write(proposal: Proposal, *, actor: str, store: ProposalSto
     return ActionResult(proposal.id, APPLIED_OUTCOME, "in the tracker: " + " and ".join(p for p in parts if p) + skipped + placed)
 
 
+def _execute_report_save(proposal: Proposal, *, actor: str, store: ProposalStore, db_path) -> ActionResult:
+    """Save an approved weekly report as its final version, through the same gate as a send: guarded_send refuses anything not approved and logs
+    the attempt. Nothing is sent anywhere, and the audit says so."""
+    try:
+        plan = report_apply.plan_save(proposal)
+    except report_apply.ReportApplyRefused as exc:
+        write_audit(db_path, actor=actor, action="proposal.send_refused", proposal_id=proposal.id, details={"reason": str(exc)})
+        return ActionResult(proposal.id, REFUSED, str(exc))
+    try:
+        guarded_send(proposal.id, action_type="report_save", target=str(plan.path), send_fn=lambda: report_apply.save(plan), store=store, db_path=db_path)
+    except WriteRefusedError as exc:
+        return ActionResult(proposal.id, REFUSED, str(exc))
+    except Exception as exc:  # noqa: BLE001 - guarded_send already logged send_failed; report, never raise
+        write_audit(db_path, actor=actor, action="proposal.send_failed", proposal_id=proposal.id,
+                    details={"error": f"{type(exc).__name__}: {exc}"[:300]})
+        return ActionResult(proposal.id, SEND_FAILED, f"{type(exc).__name__}: {exc}")
+    write_audit(db_path, actor=actor, action="proposal.applied", proposal_id=proposal.id,
+                details={"target": "report_file", "path": str(plan.path), "sent": False, "already_saved": plan.already_saved})
+    return ActionResult(proposal.id, APPLIED_OUTCOME, f"saved the approved report to {plan.path}; it was not sent anywhere: the agent never sends it")
+
+
 def _execute(
     proposal_id: str, *, actor: str, publisher, policy: ApprovalPolicy | None, store: ProposalStore, db_path, now: datetime | None = None,
     risk_log: RiskLogStore | None = None, tracker: Tracker | None = None,
@@ -523,7 +565,9 @@ def _execute(
         return _execute_risk_write(proposal, actor=actor, store=store, db_path=db_path, risk_log=risk_log)
     if proposal.type in TRACKER_WRITE_TYPES:
         return _execute_tracker_write(proposal, actor=actor, store=store, db_path=db_path, tracker=tracker)
-    unsupported = _not_executable(proposal)  # defence in depth: whatever its status, only a message, a risk-log write or a tracker write is carried out
+    if proposal.type in REPORT_WRITE_TYPES:
+        return _execute_report_save(proposal, actor=actor, store=store, db_path=db_path)
+    unsupported = _not_executable(proposal)  # defence in depth: whatever its status, only a message, a risk-log write, a tracker write or a report save is carried out
     if unsupported:
         return ActionResult(proposal_id, REFUSED, unsupported)
     scope_problem = _out_of_scope(proposal, publisher, policy)
