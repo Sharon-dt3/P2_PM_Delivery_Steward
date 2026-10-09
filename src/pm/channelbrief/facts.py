@@ -36,6 +36,7 @@ from pm.adapters.tracker import TrackerMock
 from pm.channel.record import ChannelRecord, RecordRefused, load_record, record_file
 from pm.channelbrief.commits import CommitLine, commit_lines
 from pm.commitments.outcomes import is_commitment, resolve_due
+from pm.people import name_key
 
 MORNING, EVENING = "morning", "evening"
 MAX_AGE_DAYS = 7  # a record older than this is not used
@@ -138,6 +139,7 @@ class P1Directory:
     def __init__(self, path: Path | None = None) -> None:
         self._path = Path(path) if path is not None else p1_db_path()
         self._names: dict[str, str] = {}
+        self._twins: dict[str, int] = {}  # how many members share each display name (the one rule's key), so identical names can be told apart
         self._messages: dict[str, tuple[str | None, str]] = {}
         self._links: dict[str, str] = {}
         self._channels: dict[str, str] = {}
@@ -149,6 +151,9 @@ class P1Directory:
         try:
             for member_id, name in conn.execute("SELECT id, display_name FROM members"):
                 self._names[member_id] = name or ""
+            for member_id, name in self._names.items():
+                if self._real(member_id):
+                    self._twins[name_key(name)] = self._twins.get(name_key(name), 0) + 1
             for message_id, author, posted_at in conn.execute("SELECT id, author_id, posted_at FROM messages"):
                 self._messages[message_id] = (author, posted_at)
             try:  # a store from before permalinks existed has no such column: no links, everything else works
@@ -165,12 +170,18 @@ class P1Directory:
         finally:
             conn.close()
 
-    def name(self, member_id: str | None) -> str | None:
-        """A person's name, or None. A name that is only their id (P1 registers one until it can learn the real one) is no name."""
-        if not member_id:
-            return None
+    def _real(self, member_id: str) -> bool:
         name = (self._names.get(member_id) or "").strip()
-        return name if name and name != member_id and not re.fullmatch(r"[0-9a-f-]{30,}", name) else None
+        return bool(name) and name != member_id and not re.fullmatch(r"[0-9a-f-]{30,}", name)
+
+    def name(self, member_id: str | None) -> str | None:
+        """A person's name, or None. A name that is only their id (P1 registers one until it can learn the real one) is no name. Two members with exactly
+        the same name (PM-32: ignoring case and outer spaces, as P1 matches names) are told apart by the start of their id, so a line never reads as one
+        person's when it could be either's."""
+        if not member_id or not self._real(member_id):
+            return None
+        name = self._names[member_id].strip()
+        return name if self._twins.get(name_key(name), 1) == 1 else f"{name} ({member_id[:8]})"
 
     def author_of(self, message_id: str) -> str | None:
         author, _ = self._messages.get(message_id, (None, ""))

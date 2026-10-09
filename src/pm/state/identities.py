@@ -24,6 +24,8 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+from pm.people import Person, Resolution, resolve
+
 DEFAULT_IDENTITIES_PATH = Path("data/identities.json")
 
 
@@ -39,9 +41,14 @@ class IdentityMap(BaseModel):
     aliases: dict[str, str] = {}  # author name as the code host spells it -> canonical (roster) id
     ignored_authors: list[str] = []  # automated accounts whose commits are not a teammate's activity
 
+    def resolution(self, author_id: str, people: Iterable[Person]) -> Resolution:
+        """The full answer for a commit author, by the one rule in pm.people: a PERSON only when the author is exact (an alias, an id, or one
+        person's exact display name); AMBIGUOUS when it could be more than one person; UNKNOWN when it is nobody's, even if it resembles someone."""
+        return resolve(author_id, people, aliases=self.aliases, ignored=self.ignored_authors)
+
     def resolve(self, author_id: str, roster_ids: Iterable[str]) -> str | None:
         """The canonical person for a commit author, or None for an ignored
-        automated account."""
+        automated account. Ids and aliases only: it cannot say AMBIGUOUS, so the facts use resolution() with the roster's names instead."""
         key = _norm(author_id)
         if key in {_norm(a) for a in self.ignored_authors}:
             return None

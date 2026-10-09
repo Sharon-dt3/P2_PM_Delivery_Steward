@@ -519,6 +519,18 @@ def _render_brief(facts: MorningBriefFacts, sections: dict[str, list[FactualLine
                   + (f" (the tracker says {u.raw_status!r})" if u.status == "UNMAPPED" else "") + "." for u in facts.unassigned]
         parts.append("")
 
+    if facts.author_notes:
+        # PM-32: an author the brief could not attribute to ONE person is said as what it is, in a line worded by code, and credited to nobody.
+        parts.append("## Authors not matched to a person")
+        for note in facts.author_notes:
+            many = f"{note.commits} commit" + ("" if note.commits == 1 else "s")
+            who = " or ".join(note.candidates)
+            parts.append(
+                f"- {note.author!r} ({many}): ambiguous, it could be {who}. Not counted for either." if note.kind == "ambiguous" and len(note.candidates) == 2
+                else f"- {note.author!r} ({many}): ambiguous, it could be {who}. Not counted for any of them." if note.kind == "ambiguous"
+                else f"- {note.author!r} ({many}): not matched to anyone. It resembles {who} but is not their id, name or an alias, so it is not merged into them.")
+        parts.append("")
+
     if facts.unreferenced_commits:
         parts.append("## Commits with no item reference")
         parts += [f"- {c.sha}: {c.subject} ({c.author}, {c.committed_on})." for c in facts.unreferenced_commits]

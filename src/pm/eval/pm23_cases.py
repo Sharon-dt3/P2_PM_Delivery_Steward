@@ -86,6 +86,12 @@ def facts_from_text(content: str) -> set[Fact]:
         if title == "Blockers":
             facts |= _blocker_facts(lines)
             continue
+        if title == "Authors not matched to a person":
+            for line in lines:
+                found = re.match(r"(.+) \((\d+) commits?\): (ambiguous|not matched)", line)
+                if found:
+                    facts.add(("author_note", "ambiguous" if found.group(3) == "ambiguous" else "unmatched", ast.literal_eval(found.group(1)), int(found.group(2))))
+            continue
         if title == "Commits with no item reference":
             for line in lines:
                 found = re.match(r"([0-9a-f]{7,40}): ", line)
@@ -145,6 +151,7 @@ def facts_from_structure(facts: MorningBriefFacts) -> set[Fact]:
                 ("sprint", "done", sprint.done_items, sprint.total_items)}
     out |= {("unassigned", u.item_id, u.status, u.raw_status if u.status == "UNMAPPED" else "") for u in facts.unassigned}
     out |= {("unreferenced_commit", c.sha) for c in facts.unreferenced_commits}
+    out |= {("author_note", n.kind, n.author, n.commits) for n in facts.author_notes}
     for person in facts.people:
         out.add(("owner", person.name))
         if not person.has_activity:

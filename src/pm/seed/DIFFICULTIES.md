@@ -140,3 +140,10 @@ corrected into the nearest status (`In Progress`, `in-progress` and `done ` are 
   "UNMAPPED to UNMAPPED". The footer counts unmapped items without naming them and does not count them as open;
 - the weekly report: `PM-022 has a status the tracker does not map: UNMAPPED (the tracker says 'waiting_on_vendor').`
 - proven by `tests/unit/test_unmapped_status.py`.
+
+
+## PM-32: how difficulty 10 (the similar names) is handled
+
+`olivia.dupont` and `olivia.dupree` are two people with two sections in every brief. Resolution is by one rule (`src/pm/people.py`, written up in `docs/people_resolution.md`): a person is
+their id; only an exact id, alias or display name resolves to them. A bare `Olivia`, `olivia d` or `Dup` could be either, so it is credited to neither and listed as ambiguous; `O. Dupont`
+or a typo resembles one but is not merged into them. Proven by `tests/unit/test_people_resolution.py`.
