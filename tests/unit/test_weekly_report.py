@@ -244,3 +244,14 @@ def test_digits_inside_a_title_quoted_from_the_tracker_or_risk_log_are_not_figur
     assert "P5 uses 55 graph ids while P9 has 77 of its own" in text
     assert check_report(facts, text, end, start, previous) == []
     assert unexplained_numbers(facts, text + "\nIn short: up 99%.") == {99}  # a number outside the quoted title is still caught
+
+
+def test_the_weekly_reports_card_says_it_is_a_draft_never_sent_not_that_approving_is_unbuilt(seeded_db_path):
+    made = job.run_weekly_report_job(FRIDAY, db_path=seeded_db_path, timezone_name=TZ)
+
+    card = next(a for a in cards.handle_list_pending({}, db_path=seeded_db_path)["approvals"] if a["proposal_id"] == made.proposal_id)["card"]
+    notes = [e["text"] for e in card["body"] if e.get("isSubtle")]
+
+    assert notes == ["This is a draft for you to read. The agent never sends it, so there is nothing to approve: you can only reject it."]
+    assert "not built yet" not in " ".join(notes)
+    assert any("Weekly status report, week ending 2026-09-18" in e["text"] for e in card["body"])  # the report itself is on the card

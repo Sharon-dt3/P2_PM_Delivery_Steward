@@ -23,6 +23,7 @@ from pm.approval.proposals import (
     EOD_PROPOSAL_TYPE,
     ESCALATION_PROPOSAL_TYPE,
     NUDGE_PROPOSAL_TYPE,
+    WEEKLY_REPORT_PROPOSAL_TYPE,
 )
 from pm.approval.risk_apply import DEFAULT_SEVERITY
 from pm.approval.service import ActionResult, ApprovalPolicy, PendingApproval
@@ -139,13 +140,19 @@ def pending_tracker_card(pending: PendingApproval) -> dict:
     )
 
 
+def _proposal_only_note(pending: PendingApproval) -> str:
+    if pending.type == WEEKLY_REPORT_PROPOSAL_TYPE:
+        return "This is a draft for you to read. The agent never sends it, so there is nothing to approve: you can only reject it."
+    return "Applying an approved proposal of this kind is not built yet: it can only be rejected."
+
+
 def pending_proposal_only_card(pending: PendingApproval) -> dict:
     """The card for a proposal that can be read and rejected but not carried out (a type nothing applies yet): no Approve, no edit box."""
     return _card(
         [
             _text(pending.summary, size="Large", weight="Bolder"),
             _text(pending.content, fontType="Monospace"),
-            _text("Applying an approved proposal of this kind is not built yet: it can only be rejected.", isSubtle=True),
+            _text(_proposal_only_note(pending), isSubtle=True),
         ],
         [
             {
