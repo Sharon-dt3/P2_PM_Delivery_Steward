@@ -227,3 +227,20 @@ def test_the_report_comes_from_the_stored_snapshots_not_from_whatever_the_tracke
     again = job.run_weekly_report_job(FRIDAY, db_path=seeded_db_path, timezone_name=TZ, propose=False)
 
     assert again.text == first.text and "CHANGED AFTER THE SNAPSHOT" not in again.text  # it used the copies it had already stored
+
+
+def test_digits_inside_a_title_quoted_from_the_tracker_or_risk_log_are_not_figures(seeded_db_path):
+    """Found live: a real risk is titled '... P2 has its own identity model while P1 uses graph ids', and the check refused the whole report."""
+    import sqlite3
+
+    conn = sqlite3.connect(seeded_db_path)
+    conn.execute("UPDATE items SET title = 'P5 uses 55 graph ids while P9 has 77 of its own' WHERE id = 'PM-023'")
+    conn.commit()
+    conn.close()
+    end, start, previous = snapshots(seeded_db_path)
+    facts = compute_weekly_facts(end, start, previous)
+    text = render_weekly_report(facts)
+
+    assert "P5 uses 55 graph ids while P9 has 77 of its own" in text
+    assert check_report(facts, text, end, start, previous) == []
+    assert unexplained_numbers(facts, text + "\nIn short: up 99%.") == {99}  # a number outside the quoted title is still caught

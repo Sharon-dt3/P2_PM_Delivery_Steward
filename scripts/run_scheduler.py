@@ -42,6 +42,7 @@ for _path in (_REPO_ROOT / "src", _P1_REPO_ROOT / "src", _REPO_ROOT / "packages"
 from pm.approval.settings import describe_settings
 from pm.jobs.end_of_day_job import run_end_of_day_job
 from pm.jobs.morning_brief_job import run_morning_brief_job
+from pm.scheduling import weekly_report as weekly
 from pm.scheduling.channel_briefs import add_channel_brief_jobs
 from pm.scheduling.clock import (
     parse_at,
@@ -87,6 +88,24 @@ def _print_schedule(scheduler, config: ProjectScheduleConfig) -> None:
         print(f"  {line}")
 
 
+def _weekly_gateway(kind: str):
+    if kind == "none":
+        return None
+    if kind == "scripted":
+        from pm.reporting.scripted_weekly import ScriptedWeeklyGateway
+
+        return ScriptedWeeklyGateway()
+    from spine.llm.gateway import LLMGateway
+
+    return LLMGateway()
+
+
+def _print_weekly(scheduler, schedule) -> None:
+    job = scheduler.get_job(weekly.JOB_ID)
+    nxt = job.trigger.get_next_fire_time(None, datetime.now(timezone.utc)) if job else None
+    print(f"  weekly_report    at {schedule.day} {schedule.at.strftime('%H:%M')} {schedule.timezone}  next: {nxt.isoformat() if nxt else 'never'}  (a draft proposal; never sent)")
+
+
 def _print_channel_briefs(scheduler, entries) -> None:
     """The real-channel briefs: each channel's own timezone, and the next time each job fires."""
     now = datetime.now(timezone.utc)
@@ -109,11 +128,16 @@ def main(argv: list[str] | None = None, *, block: bool = True) -> int:
     mode.add_argument("--once", action="store_true", help="run one job once and exit (the morning brief unless --job says otherwise)")
     mode.add_argument("--print-schedule", action="store_true", help="show the schedule and exit")
     parser.add_argument("--at", help="with --once: act as if it were this time, in the project's timezone")
-    parser.add_argument("--job", choices=["morning", "end-of-day"], default="morning", help="with --once: which job to run")
+    parser.add_argument("--job", choices=["morning", "end-of-day", "weekly"], default="morning", help="with --once: which job to run")
     parser.add_argument("--channel-briefs", default=os.environ.get("PM_CHANNEL_BRIEFS", ""), metavar="NAMES",
                         help="comma-separated real channels (P1 display names or ids) to make morning and evening briefs for, from P1's real "
                              "records (default: PM_CHANNEL_BRIEFS). Given, the seeded sample project is NOT scheduled unless --with-sample-project")
     parser.add_argument("--with-sample-project", action="store_true", help="with --channel-briefs: also schedule the seeded sample project's jobs")
+    parser.add_argument("--weekly-report", action="store_true", default=weekly.enabled(),
+                        help="also make the weekly status report once a week (PM_WEEKLY_REPORT_AT, default Fri 18:00 Asia/Colombo) and offer it as a proposal; "
+                             "never sent (default: PM_WEEKLY_REPORT=1)")
+    parser.add_argument("--weekly-gateway", choices=["llm", "scripted", "none"], default="llm",
+                        help="who writes the weekly report's narrative: the model set by the environment, a stand-in, or nobody")
     args = parser.parse_args(argv)
     channels = [c.strip() for c in args.channel_briefs.split(",") if c.strip()]
 
@@ -125,6 +149,12 @@ def main(argv: list[str] | None = None, *, block: bool = True) -> int:
         except ValueError:
             print(f"--at must look like 2026-09-16T08:00 (read in {config.timezone}); got {args.at!r}")
             return 2
+        if args.job == "weekly":
+            report = weekly.run_weekly_report_scheduled(db_path=args.db, timezone_name=weekly.weekly_schedule().timezone, gateway=_weekly_gateway(args.weekly_gateway),
+                                                        moment=moment)
+            print("weekly report: " + ("not made (see the log)" if report is None else
+                  f"{'proposed' if report.created else 'already proposed'} {report.proposal_id}" if report.proposal_id else f"not offered: {len(report.problems)} problem(s)"))
+            return 0 if report is not None else 1
         if args.job == "end-of-day":
             summary_result = run_end_of_day_job(config, _gateway(args.gateway), moment=moment, db_path=args.db)
             print(f"{summary_result.status}: {summary_result.detail}")
@@ -147,10 +177,13 @@ def main(argv: list[str] | None = None, *, block: bool = True) -> int:
     sample = args.with_sample_project or not channels
     scheduler = build_scheduler([config] if sample else [], _gateway(args.gateway), db_path=args.db)
     entries = add_channel_brief_jobs(scheduler, channels, db_path=args.db) if channels else []
+    weekly_schedule = weekly.add_weekly_report_job(scheduler, db_path=args.db, gateway=_weekly_gateway(args.weekly_gateway)) if args.weekly_report else None
     if args.print_schedule:
         if sample:
             _print_schedule(scheduler, config)
         _print_channel_briefs(scheduler, entries)
+        if weekly_schedule:
+            _print_weekly(scheduler, weekly_schedule)
         return 0
 
     scheduler.start()
@@ -158,6 +191,8 @@ def main(argv: list[str] | None = None, *, block: bool = True) -> int:
     if sample:
         _print_schedule(scheduler, config)
     _print_channel_briefs(scheduler, entries)
+    if weekly_schedule:
+        _print_weekly(scheduler, weekly_schedule)
     if not block:
         scheduler.shutdown(wait=False)
         return 0

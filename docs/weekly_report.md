@@ -45,3 +45,17 @@ and a report that does not recompute is never offered as a proposal: the problem
 ## The proposal
 
 Type `weekly_status_report`, one per week ending (idempotent). Its card in Teams has **Reject only**; approving it is refused ("nothing carries it out").
+
+## On a schedule
+
+Opt-in: `PM_WEEKLY_REPORT=1` in `.env` (or `--weekly-report` on the scheduler). The scheduler then makes the report **Fridays at 18:00 in Asia/Colombo**, 15 minutes after
+P1's Friday weekly digest. `PM_WEEKLY_REPORT_AT="Fri 18:00"` and `PM_WEEKLY_REPORT_TZ` change the day, time and timezone. `--weekly-gateway llm|scripted|none`
+says who writes the narrative (default: the model set by the environment). It only creates the proposal; the card in Teams has Reject only.
+
+A model that is down costs the report its narrative, not its existence (logged as `weekly_report_narrative_unavailable`). A run that cannot make the report at
+all logs why (`weekly_report_failed`) and never takes the scheduler down. One report per week ending, so a second run the same week proposes nothing new.
+
+    uv run python scripts/run_scheduler.py --once --job weekly --at 2026-09-18T18:00 --db /tmp/scratch.db --weekly-gateway scripted
+
+What the report says depends on the project it reads: on the seeded sample project (Sprint 13 ended on 20 September) a report for a later date says "No sprint on file
+covers this date". The risks section reads the shared risk log, so it shows real risks.

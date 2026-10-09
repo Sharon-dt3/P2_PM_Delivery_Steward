@@ -95,9 +95,20 @@ def check_report(facts: WeeklyFacts, text: str, end: ProjectSnapshot, start: Pro
     return problems
 
 
+def _recorded_text(facts: WeeklyFacts) -> list[str]:
+    """The free text the report quotes from the tracker and the risk log, longest first so a title is removed whole before any part of it."""
+    found = [line.title for line in (*facts.added_after_planning, *facts.blocked, *facts.unmapped)]
+    found += [u.detail for u in facts.unmapped] + [risk.title for risk in facts.top_risks]
+    return sorted({w for w in found if w}, key=len, reverse=True)
+
+
 def unexplained_numbers(facts: WeeklyFacts, text: str) -> set[int]:
-    """Numbers in the text that are not figures: set aside ids (PM-031, RISK-002, sprint-13), dates, the sprint's own name and rank markers first."""
-    stripped = re.sub(r"\b(?:PM|RISK|sprint)-\d+\b", " ", text)
+    """Numbers in the text that are not figures: set aside the free text quoted from the tracker and the risk log (titles, raw statuses), ids
+    (PM-031, RISK-002, sprint-13), dates, the sprint's own name and rank markers first."""
+    stripped = text
+    for words in _recorded_text(facts):  # a title or a raw status is what someone wrote in the tracker or the risk log, not something computed: "P1 uses graph ids"
+        stripped = stripped.replace(words, " ")
+    stripped = re.sub(r"\b(?:PM|RISK|sprint)-\d+\b", " ", stripped)
     stripped = re.sub(r"\d{4}-\d{2}-\d{2}", " ", stripped)
     if facts.sprint:
         stripped = stripped.replace(facts.sprint.display_name, " ")
