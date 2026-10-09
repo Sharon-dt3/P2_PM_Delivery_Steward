@@ -406,9 +406,14 @@ def scenario_item_moved_twice() -> list[str]:
         add_item(db, "PM-303", "Done, reopened, done again", "done", [("in_progress", "done", "2026-09-15T09:00:00+00:00"),
                                                                        ("done", "in_progress", d + "03:00:00+00:00"), ("in_progress", "done", d + "10:00:00+00:00")])
         add_item(db, "PM-304", "Done, then reopened", "in_progress", [("in_progress", "done", d + "03:30:00+00:00"), ("done", "in_progress", d + "10:30:00+00:00")])
+        add_item(db, "PM-305", "Blocked all day, flapped", "blocked", [("in_progress", "blocked", "2026-09-15T09:00:00+00:00"),
+                                                                        ("blocked", "in_progress", d + "04:00:00+00:00"), ("in_progress", "blocked", d + "09:00:00+00:00")])
         day = run_day(db)
         problems += problems_in(day)
-        for item_id in ("PM-301", "PM-302", "PM-303", "PM-304"):
+        blocked = day.summary.content.split("## What is newly blocked", 1)[1].split("\n## ", 1)[0]
+        if "PM-305" in blocked:
+            problems.append("PM-305 was already blocked this morning, flapped, and is reported as newly blocked")
+        for item_id in ("PM-301", "PM-302", "PM-303", "PM-304", "PM-305"):
             subjects = [line for line in day.summary.content.splitlines() if line.startswith("- ") and _ITEM_ID.findall(_QUOTED.sub("", line))[:1] == [item_id]]
             if len(subjects) > 1:
                 problems.append(f"{item_id} moved twice but is reported {len(subjects)} times")

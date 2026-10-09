@@ -188,6 +188,14 @@ def test_an_item_that_was_not_done_shown_as_shipped_is_found(eod_day):
     assert any("PM-402 is shown as shipped today" in p for p in eod_problems(eod_day, content))
 
 
+def test_a_done_item_shown_as_still_pending_or_newly_blocked_is_found(eod_day):
+    pending = eod_day.summary.content.replace("## What is still pending\n", '## What is still pending\n- PM-401 moved from in_progress to in_review. Title: "x". Owner: Aisha Rahman.\n', 1)
+    blocked = eod_day.summary.content.replace("## What is newly blocked\n", '## What is newly blocked\n- PM-401 moved from in_progress to blocked. Title: "x". Owner: Aisha Rahman.\n', 1)
+
+    assert any("PM-401 is shown as still pending" in p for p in eod_problems(eod_day, pending))
+    assert any("PM-401 is shown as newly blocked" in p for p in eod_problems(eod_day, blocked))
+
+
 def test_an_item_that_was_already_done_this_morning_shown_as_shipped_is_found(eod_day):
     content = eod_day.summary.content.replace("## What shipped\n", '## What shipped\n- PM-403 moved from in_progress to done. Title: "x". Owner: Aisha Rahman.\n', 1)
 
@@ -225,6 +233,17 @@ def test_an_item_blocked_then_done_is_one_shipped_line_that_shows_the_path(tmp_p
     assert content.count("PM-411") == 1
     line = next(x for x in content.splitlines() if x.startswith("- PM-411 "))
     assert "in_progress -> blocked -> done" in line and line in content.split("## What shipped")[1].split("## ")[0]
+
+
+def test_an_item_blocked_all_day_that_flapped_is_not_newly_blocked(tmp_path):
+    db = edge.fresh_db(tmp_path)
+    edge.add_item(db, "PM-431", "Blocked all day, flapped", "blocked", [("in_progress", "blocked", "2026-09-15T09:00:00+00:00"),
+                                                                       ("blocked", "in_progress", "2026-09-16T04:00:00+00:00"), ("in_progress", "blocked", "2026-09-16T09:00:00+00:00")])
+
+    content = edge.run_day(db).summary.content
+
+    assert "PM-431" not in content.split("## What is newly blocked", 1)[1].split("\n## ", 1)[0]
+    assert "PM-431 churned (blocked -> in_progress -> blocked)" in content
 
 
 def test_done_then_reopened_then_done_is_not_shipped_today_and_a_reopened_item_is_not_shipped_either(tmp_path):
