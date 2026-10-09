@@ -51,7 +51,11 @@ from pm.jobs.proposal_flow import propose_for_approval
 from pm.jobs.snapshot_capture import capture_snapshot
 from pm.mirror.hook import mirrored
 from pm.reporting.facts import compute_morning_brief_facts
-from pm.reporting.morning_brief import MorningBrief, generate_morning_brief, sections_the_model_failed
+from pm.reporting.morning_brief import (
+    MorningBrief,
+    generate_morning_brief,
+    sections_the_model_failed,
+)
 from pm.risk.promotion_config import PromotionConfigError, load_promotion_policy
 from pm.risk.proposals import detect_and_propose
 from pm.risklog.hook import pull_lead_edits_if_enabled

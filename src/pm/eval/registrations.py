@@ -16,7 +16,9 @@ def register_all(registry: GoldenCaseRegistry, **kwargs) -> None:
 
     register_pm12(registry, **kwargs)
 
-    from pm.eval.pm35_cases import register as register_pm35  # PM-35: seven edge scenarios, each a probe inside GC2
+    from pm.eval.pm35_cases import (
+        register as register_pm35,  # PM-35: seven edge scenarios, each a probe inside GC2
+    )
 
     register_pm35()
 
