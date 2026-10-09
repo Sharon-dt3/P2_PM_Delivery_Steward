@@ -506,3 +506,22 @@ def test_a_json_answer_of_the_wrong_shape_does_not_break_the_weekly_report(seede
     report = weekly_report_job.run_weekly_report_job(FRIDAY, db_path=seeded_db_path, timezone_name=TZ, gateway=edge.RawGateway(json.dumps({"lines": "all good"})))
 
     assert report.problems == [] and report.narrative.closing is None
+
+
+# --- the risk-log proposals: the fifth place a model is asked -------------------------------------------------------------------------------------
+
+
+def test_risk_proposals_with_the_model_unreachable_are_still_made_from_the_recorded_facts_and_the_model_is_asked_once(seeded_db_path):
+    from pm.risk.proposals import detect_and_propose
+    from pm.seed.build import ANCHOR_DATE
+
+    snapshot = build_current_snapshot(seeded_db_path, taken_at=f"{ANCHOR_DATE.isoformat()}T12:00:00+00:00", tz_name=TZ)
+    gateway = edge.UnavailableGateway()
+
+    results = detect_and_propose(snapshot, gateway, db_path=seeded_db_path)
+
+    assert len(results) >= 2 and gateway.calls == 1  # two blockers have no risk-log entry; the outage cost one round of retries
+    store = ProposalStore(seeded_db_path)
+    for result in results:
+        payload = store.get(result.proposal_id).payload
+        assert payload["prose_source"] == {"description": "template", "impact": "template"}  # no model words were used: nothing model-made to ground

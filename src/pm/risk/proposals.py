@@ -37,6 +37,7 @@ from pathlib import Path
 from pydantic import BaseModel
 from spine.approval.proposals import ProposalStore
 from spine.grounding.kernel import FactualLine, ground_with_retry
+from spine.llm.gateway import LLMGatewayError
 from spine.llm.structured import generate_structured
 from spine.prompts.registry import PromptRegistry
 
@@ -234,6 +235,7 @@ def detect_and_propose(
     kinds_wanted = ("description", "impact") if promotion is None else ("description", "impact", "mitigation")
     store = ProposalStore(db_path)
     results = []
+    model_down: str | None = None  # set once the gateway itself has failed: the other blockers are then not tried (one outage, one round of retries)
     for gap in gaps:
         recalled = memory.recall(gap, _earlier_proposals(store, gap.item_id))
         if recalled.state not in (memory.NEW, memory.CHANGED_SINCE_REJECTION):
@@ -245,11 +247,17 @@ def detect_and_propose(
             change = memory.change_statement(recalled, rejection_reason=_rejection_reason(recalled.proposal.id, db_path))
         key = f"{RISK_PROPOSAL_TYPE}:{gap.item_id}:{memory.fingerprint(gap)}"
 
-        try:
-            chosen, lines, dropped = _ask_model(gap, gateway, prompt, kinds_wanted=kinds_wanted)
-        except Exception as exc:  # noqa: BLE001 - a model that fails must not lose a real gap
-            logger.warning("risk_prose_failed item=%s error=%s: %s", gap.item_id, type(exc).__name__, exc)
-            chosen, lines, dropped = {}, [], [{"reason": "model_failed", "detail": f"{type(exc).__name__}: {exc}", "text": ""}]
+        if model_down is not None:
+            chosen, lines, dropped = {}, [], [{"reason": "model_failed", "text": "",
+                                               "detail": f"not tried again, the model was already unavailable in this run ({model_down})"}]
+        else:
+            try:
+                chosen, lines, dropped = _ask_model(gap, gateway, prompt, kinds_wanted=kinds_wanted)
+            except Exception as exc:  # noqa: BLE001 - a model that fails must not lose a real gap
+                logger.warning("risk_prose_failed item=%s error=%s: %s", gap.item_id, type(exc).__name__, exc)
+                chosen, lines, dropped = {}, [], [{"reason": "model_failed", "detail": f"{type(exc).__name__}: {exc}", "text": ""}]
+                if isinstance(exc, LLMGatewayError):
+                    model_down = f"{type(exc).__name__}: {exc}"
 
         description = chosen.get("description") or gap.description_text()
         impact = chosen.get("impact") or gap.impact_text()
