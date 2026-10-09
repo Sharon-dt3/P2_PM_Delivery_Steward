@@ -230,3 +230,21 @@ def test_digits_inside_a_title_quoted_from_the_tracker_or_risk_log_are_not_figur
     assert "P5 uses 55 graph ids while P9 has 77 of its own" in text
     assert check_report(facts, text, end, start, previous) == []
     assert unexplained_numbers(facts, text + "\nIn short: up 99%.") == {99}  # a number outside the quoted title is still caught
+
+
+def test_a_title_quoted_in_plainer_case_or_in_part_by_the_narrative_does_not_trip_the_check(seeded_db_path):
+    """Found live, the day a current sprint made the real items count: a model line wrote 'the author is seeing a recurring 403 Forbidden error'
+    for the title 'The author is seeing a recurring 403 Forbidden error', and the whole report was refused."""
+    import sqlite3
+
+    conn = sqlite3.connect(seeded_db_path)
+    conn.execute("UPDATE items SET title = 'The author is seeing a recurring 403 Forbidden error' WHERE id = 'PM-023'")
+    conn.commit()
+    conn.close()
+    end, start, previous = snapshots(seeded_db_path)
+    facts = compute_weekly_facts(end, start, previous)
+    text = render_weekly_report(facts)
+    plainer = text + "\n- the author is seeing a recurring 403 Forbidden error.\n- seeing a recurring 403 Forbidden error."
+
+    assert check_report(facts, plainer, end, start, previous) == []  # lower-cased, and only a part of the title
+    assert unexplained_numbers(facts, plainer + "\n- and 404 more.") == {404}  # a number that is in no title and no figure is still caught

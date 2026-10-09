@@ -107,11 +107,14 @@ def unexplained_numbers(facts: WeeklyFacts, text: str) -> set[int]:
     (PM-031, RISK-002, sprint-13), dates, the sprint's own name and rank markers first."""
     stripped = text
     for words in _recorded_text(facts):  # a title or a raw status is what someone wrote in the tracker or the risk log, not something computed: "P1 uses graph ids"
-        stripped = stripped.replace(words, " ")
+        stripped = re.sub(re.escape(words), " ", stripped, flags=re.IGNORECASE)
     stripped = re.sub(r"\b(?:PM|RISK|sprint)-\d+\b", " ", stripped)
     stripped = re.sub(r"\d{4}-\d{2}-\d{2}", " ", stripped)
     if facts.sprint:
         stripped = stripped.replace(facts.sprint.display_name, " ")
     stripped = re.sub(r"(?m)^\d+\. ", " ", stripped)
     allowed = {int(f.value) for f in facts.figures if isinstance(f.value, (int, float))}
+    # A model line may quote a recorded title in plainer case or in part ("... a recurring 403 Forbidden error"), so a number that is written inside a recorded
+    # title is that title's own number wherever it is quoted. A model line is already grounded against its own fact, so it cannot bring a number from another.
+    allowed |= {int(n) for words in _recorded_text(facts) for n in re.findall(r"\d+", words)}
     return {int(n) for n in re.findall(r"\d+", stripped)} - allowed

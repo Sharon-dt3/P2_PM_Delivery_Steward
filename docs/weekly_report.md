@@ -73,3 +73,15 @@ all logs why (`weekly_report_failed`) and never takes the scheduler down. One re
 
 What the report says depends on the project it reads: on the seeded sample project (Sprint 13 ended on 20 September) a report for a later date says "No sprint on file
 covers this date". The risks section reads the shared risk log, so it shows real risks.
+
+## Keeping a current sprint
+
+The report measures the sprint that covers its date, and new items from a channel go to the sprint that covers their day (or, when none does, to the sprint named in
+`PM_TRACKER_DEFAULT_SPRINT`). Nothing picks a sprint for you. When a sprint ends, add the next one, or the report says "No sprint on file covers this date" and new
+items fall back to the named default:
+
+    uv run python scripts/add_sprint.py --id sprint-15 --name "Sprint 15" --start 2026-10-19 --end 2026-11-01 --by sharon --dry-run   # check it, change nothing
+    uv run python scripts/add_sprint.py --id sprint-15 --name "Sprint 15" --start 2026-10-19 --end 2026-11-01 --by sharon
+
+`--move PM-031,PM-032` also moves items into it. A range may not overlap another sprint; every change is in the audit log (`sprint.added`, `item.moved_sprint`).
+Sprint 14 (5 to 18 October) was added this way.
