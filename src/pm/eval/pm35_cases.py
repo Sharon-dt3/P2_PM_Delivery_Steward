@@ -475,6 +475,8 @@ def scenario_unassigned_item() -> list[str]:
             for item_id in ("PM-342", "PM-343"):
                 if item_id not in listed:
                     problems.append(f"{item_id} has no owner and is missing from the unassigned section")
+            if "PM-341" in listed:
+                problems.append("PM-341 is finished and has no owner, and is listed as work nobody is assigned to")
         people_part = day.brief.content.split("## Nobody is assigned", 1)[0]
         for item_id in ("PM-341", "PM-342", "PM-343"):
             if item_id in people_part:
