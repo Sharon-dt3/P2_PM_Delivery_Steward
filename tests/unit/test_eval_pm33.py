@@ -255,3 +255,15 @@ def test_with_no_model_configured_a_live_run_stops_and_says_so(monkeypatch):
 
     with pytest.raises(SystemExit, match="BEDROCK_MODEL_ID is not set"):
         module.bedrock_model_label()
+
+
+def test_a_metric_that_failed_on_the_real_model_is_stated_in_words_with_the_first_problem_found():
+    live = full_record(model="bedrock:global.anthropic.claude-sonnet-4-6", gc1=1.0, revision="live999")
+    fabricated = next(r for r in live["results"] if r["metric_id"] == "GC2-fabricated-claim-count")
+    fabricated.update(measured=2, passed=False, detail="scenarios (problems found): seeded 0, live model brief 2; first problem: live model brief: blockers: a line that is not grounded)")
+
+    text = render([full_record(), live])
+
+    assert "**GC2-fabricated-claim-count failed**: measured 2, target at most 0." in text
+    assert "The first problem found: live model brief: blockers: a line that is not grounded." in text
+    assert "Failing in that run" not in render([full_record(), full_record(model="bedrock:x")])
