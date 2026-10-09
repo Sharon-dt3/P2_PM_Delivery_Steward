@@ -62,12 +62,12 @@ D11 is fully built:
 
 ### Headline numbers: all nine golden cases
 
-The default run drives the brief through a scripted gateway, so these numbers measure P2's grounding, approval and delta machinery, not a language model: the record's model id says so (`scripted-gateway`) rather than naming a model that was never called. Recorded in `eval/results.jsonl`: run 2026-10-09 05:42:37 UTC, code revision `96eb993`, model id `scripted-gateway`.
+The default run drives the brief through a scripted gateway, so these numbers measure P2's grounding, approval and delta machinery, not a language model: the record's model id says so (`scripted-gateway`) rather than naming a model that was never called. Recorded in `eval/results.jsonl`: run 2026-10-09 06:26:26 UTC, code revision `d52aad3`, model id `scripted-gateway`.
 
 | Case | What it measures | Headline | Target | Metrics passing |
 |---|---|---|---|---|
 | **GC1** Citation rate | factual brief lines whose reference resolves to a real item | citation rate 0.9487 | ≥ 0.9 | 1 of 1 |
-| **GC2** Fabrication probe | lines claiming a transition, commit or message that is not in the snapshot (the headline number) | fabricated claims 0 | ≤ 0 | 1 of 1 |
+| **GC2** Fabrication probe | progress claimed that the snapshots do not support, across the brief, the posted message and seven edge scenarios (empty day, no-activity person, item moved twice, malformed output, rate limit, unassigned item, commit with no item ref); the headline number | fabricated claims 0 | ≤ 0 | 1 of 1 |
 | **GC3** Delta correctness | the computed changed set against the hand labels, the twice-moved item reported once | precision 1, recall 1 | ≥ 1 / ≥ 1 | 3 of 3 |
 | **GC4** Gap detection | blockers missing from the risk log found; none proposed twice after a rejection | precision 1, recall 1, duplicates 0 | ≥ 1 / ≥ 1 / ≤ 0 | 4 of 4 |
 | **GC5** Promotion threshold | the proposed set at a 2-day and a 4-day threshold, and that it shrinks correctly | 2-day errors 0, 4-day errors 0, shrink errors 0 | ≤ 0 / ≤ 0 / ≤ 0 | 4 of 4 |
@@ -80,12 +80,12 @@ The default run drives the brief through a scripted gateway, so these numbers me
 
 #### The same harness on a real model
 
-GC1 and GC2 are the two cases a language model can move: with `bedrock:global.anthropic.claude-sonnet-4-6` the brief is written by the model itself, so GC1 is its own first-attempt citation rate and GC2 probes what it actually wrote. Recorded: run 2026-10-09 05:43:14 UTC, code revision `96eb993`, model id `bedrock:global.anthropic.claude-sonnet-4-6`.
+GC1 and GC2 are the two cases a language model can move: with `bedrock:global.anthropic.claude-sonnet-4-6` the brief is written by the model itself, so GC1 is its own first-attempt citation rate and GC2 probes what it actually wrote. Recorded: run 2026-10-09 06:27:11 UTC, code revision `d52aad3`, model id `bedrock:global.anthropic.claude-sonnet-4-6`.
 
 | Case | What it measures | Headline | Target | Metrics passing |
 |---|---|---|---|---|
 | **GC1** Citation rate | factual brief lines whose reference resolves to a real item | citation rate 1 | ≥ 0.9 | 1 of 1 |
-| **GC2** Fabrication probe | lines claiming a transition, commit or message that is not in the snapshot (the headline number) | fabricated claims 0 | ≤ 0 | 1 of 1 |
+| **GC2** Fabrication probe | progress claimed that the snapshots do not support, across the brief, the posted message and seven edge scenarios (empty day, no-activity person, item moved twice, malformed output, rate limit, unassigned item, commit with no item ref); the headline number | fabricated claims 0 | ≤ 0 | 1 of 1 |
 
 41 of 41 metrics pass in that run. Prompts used: `ollama_schema_instructions` v1, `pm08_morning_brief` v4, `pm16_risk_proposal` v1, `pm19_risk_promotion` v1, `pm22_end_of_day_summary` v1, `pm29_weekly_closing` v1, `pm29_weekly_narrative` v1.
 

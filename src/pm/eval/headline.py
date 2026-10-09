@@ -22,7 +22,7 @@ CASES = ("GC1", "GC2", "GC3", "GC4", "GC5", "GC6", "GC7", "GC8", "GC9")
 # case -> (name, what is measured, [(label, metric id)] for the headline cell)
 HEADLINES: dict[str, tuple[str, str, list[tuple[str, str]]]] = {
     "GC1": ("Citation rate", "factual brief lines whose reference resolves to a real item", [("citation rate", "GC1-citation-rate")]),
-    "GC2": ("Fabrication probe", "lines claiming a transition, commit or message that is not in the snapshot (the headline number)", [("fabricated claims", "GC2-fabricated-claim-count")]),
+    "GC2": ("Fabrication probe", "progress claimed that the snapshots do not support, across the brief, the posted message and seven edge scenarios (empty day, no-activity person, item moved twice, malformed output, rate limit, unassigned item, commit with no item ref); the headline number", [("fabricated claims", "GC2-fabricated-claim-count")]),
     "GC3": ("Delta correctness", "the computed changed set against the hand labels, the twice-moved item reported once",
             [("precision", "GC3-delta-precision"), ("recall", "GC3-delta-recall")]),
     "GC4": ("Gap detection", "blockers missing from the risk log found; none proposed twice after a rejection",
