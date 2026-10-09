@@ -348,6 +348,41 @@ def _line_problems(line: FactualLine, detail: str) -> list[str]:
     return problems
 
 
+def _blocker_line_problems(brief: MorningBrief, facts: MorningBriefFacts) -> list[str]:
+    """Every line the Blockers section shows is a grounded blocker line or a fact shown as recorded.
+
+    A grounded line may be shown as the model wrote it, or with its severity tag and risk id in front: the brief puts those in front itself when the model
+    left them out, because they come from the risk log and not from the model. So the expected labels are worked out here from the facts, for the risk
+    the line cites, and a line whose label is not the risk's own (another severity, another id) is a fabrication, not an alternative wording."""
+    allowed: dict[str, str] = {}  # each rendering a grounded line may have -> the label its risk's facts give it
+    for line in brief.sections["blockers"]:
+        blocker = next((b for b in facts.blockers if _reference("risk", b.risk_id) == line.message_id), None)
+        if blocker is None:
+            continue  # a line citing no blocker is reported with the section's own lines above
+        label = f"[{blocker.severity}] {blocker.risk_id}: "
+        for text in (line.text, f"[{blocker.severity}] {line.text}", f"{blocker.risk_id}: {line.text}", f"{label}{line.text}"):
+            allowed[text] = label
+    problems: list[str] = []
+    in_blockers = False
+    for rendered_line in brief.content.split("\n"):
+        if rendered_line.startswith("## "):
+            in_blockers = rendered_line == "## Blockers"
+            continue
+        if not in_blockers or not rendered_line.startswith("- ") or rendered_line == "- none.":
+            continue
+        shown = rendered_line[2:]
+        if shown in allowed:
+            continue
+        if rendered_line.endswith(_AS_RECORDED) and any(b.risk_id in rendered_line for b in facts.blockers):
+            continue
+        mislabelled = next((text for line in brief.sections["blockers"] if (text := line.text) and shown.endswith(text) and shown != text), None)
+        if mislabelled is not None:
+            problems.append(f"blockers: line is labelled {shown[: -len(mislabelled)].strip()!r}, which is not the label its risk's facts give it")
+        else:
+            problems.append("blockers: rendered line is neither a grounded blocker line nor a marked fact")
+    return problems
+
+
 def count_fabrications(brief: MorningBrief, facts: MorningBriefFacts) -> list[str]:
     """Independent of the kernel: re-derived straight from `facts`."""
     problems: list[str] = []
@@ -390,22 +425,7 @@ def count_fabrications(brief: MorningBrief, facts: MorningBriefFacts) -> list[st
             if problem:
                 problems.append(f"{person.assignee_id}: {label} bucket {problem}")
 
-    blocker_texts = {line.text for line in brief.sections["blockers"]}
-    in_blockers = False
-    for rendered_line in brief.content.split("\n"):
-        if rendered_line == "## Blockers":
-            in_blockers = True
-        elif (
-            in_blockers
-            and rendered_line.startswith("- ")
-            and rendered_line != "- none."
-            and rendered_line[2:] not in blocker_texts
-            and not (
-                rendered_line.endswith(_AS_RECORDED)
-                and any(b.risk_id in rendered_line for b in facts.blockers)
-            )
-        ):
-            problems.append("blockers: rendered line is neither a grounded blocker line nor a marked fact")
+    problems += _blocker_line_problems(brief, facts)
     if facts.blockers and "- none." in brief.content.split("## Blockers")[1]:
         problems.append("blockers: rendered 'none.' although blockers exist")
     return problems
