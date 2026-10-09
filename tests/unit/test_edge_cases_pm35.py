@@ -413,13 +413,15 @@ def test_the_morning_job_says_nothing_about_failure_when_the_model_answered(seed
 
 def test_the_end_of_day_job_with_the_model_unreachable_still_proposes_a_summary_of_the_recorded_changes(seeded_db_path, tmp_path):
     edge.add_item(seeded_db_path, "PM-451", "Ship the export button", "done", [("in_progress", "done", "2026-09-16T06:00:00+00:00")])
+    edge.add_item(seeded_db_path, "PM-452", "Wire the audit log", "blocked", [("in_progress", "blocked", "2026-09-16T07:00:00+00:00")])
+    edge.add_item(seeded_db_path, "PM-453", "Review the pricing page", "in_review", [("in_progress", "in_review", "2026-09-16T08:00:00+00:00")])
     edge.capture(seeded_db_path, edge.MORNING)
     gateway = edge.UnavailableGateway()
 
     result = run_end_of_day_job(_config(), gateway, moment=edge.EVENING, db_path=seeded_db_path, publisher=LogPublisher(tmp_path / "log.jsonl"), policy=MANUAL)
 
-    assert result.status == SUMMARISED and gateway.calls == 1
-    assert "PM-451" in result.summary.content and "PM-016" in result.summary.content
+    assert result.status == SUMMARISED and gateway.calls == 1  # shipped, pending and newly blocked all have changes: still one call
+    assert all(item in result.summary.content for item in ("PM-451", "PM-452", "PM-453", "PM-016"))
     assert edge.unsupported_eod_progress(result.summary.content, edge.capture(seeded_db_path, edge.MORNING), edge.capture(seeded_db_path, edge.EVENING)) == []
 
 

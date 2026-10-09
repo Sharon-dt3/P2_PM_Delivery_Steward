@@ -441,6 +441,8 @@ def scenario_rate_limit_path() -> list[str]:
     with tempfile.TemporaryDirectory() as tmp:
         db = fresh_db(Path(tmp))
         add_item(db, "PM-331", "Ship the export button", "done", [("in_progress", "done", "2026-09-16T06:00:00+00:00")])
+        add_item(db, "PM-332", "Wire the audit log", "blocked", [("in_progress", "blocked", "2026-09-16T07:00:00+00:00")])
+        add_item(db, "PM-333", "Review the pricing page", "in_review", [("in_progress", "in_review", "2026-09-16T08:00:00+00:00")])  # three sections have facts
         down, down_summary = UnavailableGateway(), UnavailableGateway()
         day = run_day(db, brief_gateway=down, summary_gateway=down_summary)
         problems += [f"model unavailable: {p}" for p in problems_in(day)]
