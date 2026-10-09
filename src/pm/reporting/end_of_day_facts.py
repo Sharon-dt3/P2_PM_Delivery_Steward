@@ -26,7 +26,7 @@ from pydantic import BaseModel
 from pm.reporting.facts import _person_names
 from pm.state.diff import STATUS_CHANGED, ItemDelta, SnapshotDelta
 from pm.state.moments import parse_moment
-from pm.state.snapshot import ProjectSnapshot
+from pm.state.snapshot import UNMAPPED, ProjectSnapshot
 
 SHIPPED = "shipped"
 STILL_PENDING = "still_pending"
@@ -58,6 +58,7 @@ class EndOfDayFacts(BaseModel):
     morning_source: str = "stored"  # stored | reconstructed (no morning snapshot was stored for the day)
     sections: dict[str, list[EodItem]]
     unchanged_open_count: int
+    unchanged_unmapped: list[str] = []  # items whose status the tracker does not map, as "PM-022 ('waiting_on_vendor')": not known to be open, so not counted as open (the summary counts them; it names only what changed)
 
     @property
     def changed_ids(self) -> list[str]:
@@ -94,9 +95,10 @@ def compute_end_of_day_facts(
             transitions_in_window=entry.transitions_in_window, detail=detail, section=key,
         ))
     changed = {entry.item_id for entry in delta.items}
-    unchanged_open = sum(1 for item in after.items if item.status != "done" and item.id not in changed)
+    unchanged_open = sum(1 for item in after.items if item.status not in ("done", UNMAPPED) and item.id not in changed)
+    unchanged_unmapped = [f"{item.id} ({item.raw_status!r})" for item in after.items if item.status == UNMAPPED and item.id not in changed]
     local_date = parse_moment(after.taken_at).astimezone(ZoneInfo(after.timezone)).date().isoformat()
     return EndOfDayFacts(
         local_date=local_date, timezone=after.timezone, morning_taken_at=before.taken_at, evening_taken_at=after.taken_at,
-        morning_source=morning_source, sections=sections, unchanged_open_count=unchanged_open,
+        morning_source=morning_source, sections=sections, unchanged_open_count=unchanged_open, unchanged_unmapped=unchanged_unmapped,
     )

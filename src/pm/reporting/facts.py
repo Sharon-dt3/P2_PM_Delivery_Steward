@@ -28,8 +28,12 @@ deliberately, not by accident:
   - delivered/pending/blocked -- this person's own tracker items,
                   bucketed by NormalizedItem.status (what's ACTUALLY
                   true right now): done -> delivered, blocked ->
-                  blocked, anything else (backlog/in_progress/in_review/
-                  UNMAPPED) -> pending.
+                  blocked, backlog/in_progress/in_review -> pending.
+  - unmapped  -- a tracker item whose status is not one of the tracker's
+                  own (PM-31): NormalizedItem.status is UNMAPPED and its
+                  raw_status is carried here untouched. It is never filed
+                  under pending (or anywhere else): silent coercion is
+                  guessing with extra steps, so it is shown as what it is.
 Blockers are every OPEN risk in snapshot.risks, ranked by severity (high,
 then medium, then low -- RISK-003's own "mitigated" status is exactly why
 this filters on status=="open", not just "every risk on file"), tied
@@ -63,7 +67,7 @@ from pydantic import BaseModel
 
 from pm.adapters.commitments import Commitment
 from pm.state.moments import parse_moment
-from pm.state.snapshot import ProjectSnapshot
+from pm.state.snapshot import UNMAPPED, ProjectSnapshot
 
 _SEVERITY_RANK = {"high": 0, "medium": 1, "low": 2}
 
@@ -73,10 +77,17 @@ class ItemFact(BaseModel):
     title: str
 
 
+class UnmappedFact(BaseModel):
+    item_id: str
+    title: str
+    raw_status: str  # the tracker's own value, exactly as it holds it
+
+
 class UnassignedFact(BaseModel):
     item_id: str
     title: str
     status: str
+    raw_status: str = ""  # the tracker's own value; carried so that an UNMAPPED status is never shown without it
 
 
 class UnreferencedCommit(BaseModel):
@@ -93,6 +104,7 @@ class PersonFacts(BaseModel):
     delivered: list[ItemFact]
     pending: list[ItemFact]
     blocked: list[ItemFact]
+    unmapped: list[UnmappedFact] = []  # items whose status the tracker does not map: shown with the raw value, never counted as pending
     commit_count: int = 0  # commits authored in snapshot.commits, regardless of item_ref (PM-10)
 
     @property
@@ -110,7 +122,7 @@ class PersonFacts(BaseModel):
         model's own equality/serialization -- it can't drift from the
         buckets it reads because it never has a stored value of its own
         to drift from."""
-        return bool(self.committed or self.delivered or self.pending or self.blocked or self.commit_count)
+        return bool(self.committed or self.delivered or self.pending or self.blocked or self.unmapped or self.commit_count)
 
 
 class BlockerFact(BaseModel):
@@ -247,8 +259,12 @@ def _compute_person_facts(
             (
                 ItemFact(item_id=item.id, title=item.title)
                 for item in their_items
-                if item.status not in ("done", "blocked")
+                if item.status not in ("done", "blocked", UNMAPPED)
             ),
+            key=lambda fact: fact.item_id,
+        )
+        unmapped = sorted(
+            (UnmappedFact(item_id=item.id, title=item.title, raw_status=item.raw_status) for item in their_items if item.status == UNMAPPED),
             key=lambda fact: fact.item_id,
         )
         commit_count = commit_counts.get(assignee_id, 0)
@@ -260,6 +276,7 @@ def _compute_person_facts(
                 delivered=delivered,
                 pending=pending,
                 blocked=blocked,
+                unmapped=unmapped,
                 commit_count=commit_count,
             )
         )
@@ -305,7 +322,7 @@ def compute_morning_brief_facts(snapshot: ProjectSnapshot) -> MorningBriefFacts:
         blockers=_compute_blocker_facts(snapshot, names),
         unreferenced_commits=_unreferenced_commits(snapshot, names),
         unassigned=sorted(
-            (UnassignedFact(item_id=i.id, title=i.title, status=i.status) for i in snapshot.items
+            (UnassignedFact(item_id=i.id, title=i.title, status=i.status, raw_status=i.raw_status) for i in snapshot.items
              if i.assignee_id is None and i.status != "done"),
             key=lambda fact: fact.item_id,
         ),

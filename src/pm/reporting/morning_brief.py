@@ -471,7 +471,7 @@ def _render_brief(facts: MorningBriefFacts, sections: dict[str, list[FactualLine
             parts.append("")
             continue
 
-        if not (person.committed or person.delivered or person.pending or person.blocked):
+        if not (person.committed or person.delivered or person.pending or person.blocked or person.unmapped):
             # has_activity is true, so the only activity is commits.
             parts.append(f"- {_commits_only_line(person.commit_count)}")
             parts.append("")
@@ -505,12 +505,18 @@ def _render_brief(facts: MorningBriefFacts, sections: dict[str, list[FactualLine
                     ]
                     lines.extend(f"{d} {_AS_RECORDED}" for d in owned)
             parts.append(f"- {label}: " + " ".join(lines) if lines else f"- {label}: none.")
+        if person.unmapped:
+            # PM-31: a status the tracker does not map is shown as UNMAPPED with the raw value, in a line worded by code (never by a model, which could
+            # tidy the raw value into a nearby status). It is not counted under Pending or any other bucket.
+            parts.append("- Unmapped: " + " ".join(
+                f"{u.item_id} ({u.title}): UNMAPPED, the tracker says {u.raw_status!r}, which is not one of its statuses." for u in person.unmapped))
         parts.append("")
 
     if facts.unassigned:
         # Computed in code, never worded by a model: each line is the recorded fact, and cites the item it is about.
         parts.append("## Nobody is assigned")
-        parts += [f"- {u.item_id} ({u.title}): nobody is assigned; status {u.status}." for u in facts.unassigned]
+        parts += [f"- {u.item_id} ({u.title}): nobody is assigned; status {u.status}"
+                  + (f" (the tracker says {u.raw_status!r})" if u.status == "UNMAPPED" else "") + "." for u in facts.unassigned]
         parts.append("")
 
     if facts.unreferenced_commits:

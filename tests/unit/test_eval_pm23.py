@@ -412,7 +412,7 @@ def test_an_unassigned_item_is_a_checked_fact_a_brief_that_drops_or_misstates_it
 
     expected = facts_from_structure(facts)
 
-    assert ("unassigned", "PM-018", "in_review") in expected
+    assert ("unassigned", "PM-018", "in_review", "") in expected
     assert facts_from_text(shown) == expected  # said exactly as the structure has it
     assert facts_from_text(dropped) != expected and facts_from_text(misstated) != expected
     assert not any(f[0] == "owner" and f[1] == "Nobody is assigned" for f in facts_from_text(shown))  # never mistaken for a person

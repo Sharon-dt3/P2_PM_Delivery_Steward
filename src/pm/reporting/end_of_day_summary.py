@@ -139,6 +139,9 @@ def _render(facts: EndOfDayFacts, sections: dict[str, list[FactualLine]]) -> str
         parts.append("")
     count = facts.unchanged_open_count
     parts.append(f"{_plural(count, 'other open item', 'other open items')} did not change today.")
+    if facts.unchanged_unmapped:  # PM-31: not counted as open (or as anything else). Counted, not named: this summary names only what changed (PM-22)
+        n = len(facts.unchanged_unmapped)
+        parts.append(f"{_plural(n, 'other item has', 'other items have')} a status the tracker does not map (UNMAPPED) and {'is' if n == 1 else 'are'} not counted as open.")
     return "\n".join(parts)
 
 

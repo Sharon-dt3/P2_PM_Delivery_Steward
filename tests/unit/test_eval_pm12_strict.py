@@ -224,4 +224,4 @@ def test_the_runner_script_can_name_the_code_revision():
 def test_gc1_on_the_scripted_default_still_counts_its_planted_slips(facts):
     (result,) = measure_gc1(facts)
 
-    assert result.measured == 0.95 and "38 of 40" in result.detail
+    assert result.measured == 0.9487 and "37 of 39" in result.detail  # the same two planted slips; 39 lines now, because PM-022 (an unmapped status, PM-31) is no longer a model-written line

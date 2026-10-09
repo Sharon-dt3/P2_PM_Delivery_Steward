@@ -85,7 +85,7 @@ def test_golden_case_numbers_do_not_move_when_the_lead_edits_the_live_log(tmp_pa
     monkeypatch.setenv("PM_RISK_LOG_CSV", str(_edited_live_log(tmp_path)))
     after = measure_gc1()[0]
 
-    assert (after.measured, after.detail) == (before.measured, before.detail) == (0.95, "38 of 40 first-attempt lines resolve")
+    assert (after.measured, after.detail) == (before.measured, before.detail) == (0.9487, "37 of 39 first-attempt lines resolve")  # 39 model lines since PM-31: an unmapped status is shown by code, not written by the model
 
 
 def test_the_golden_case_facts_contain_the_original_blockers_even_after_a_live_edit(tmp_path, monkeypatch):

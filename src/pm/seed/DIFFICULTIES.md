@@ -127,3 +127,16 @@ in `build.py`).
 Source of truth for all ten: `src/pm/seed/build.py`. Source of proof for all
 ten: `tests/unit/test_seed_difficulties.py`. This file exists so the set can
 be named and reviewed on its own, without reading either.
+
+
+## PM-31: how difficulty 8 (the free-text status) is handled
+
+A tracker's own statuses are an exact list (`CANONICAL_STATUSES`). Anything else, however close it looks, is **UNMAPPED** and carries the value the tracker holds, never
+corrected into the nearest status (`In Progress`, `in-progress` and `done ` are all UNMAPPED). It is shown, with its raw value, in:
+
+- the morning brief: `- Unmapped: PM-022 (Billing sync vendor API migration): UNMAPPED, the tracker says 'waiting_on_vendor', which is not one of its statuses.`
+  under the item's owner, worded by code (a model could tidy the raw value into a nearby status, so it never sees the item), and not counted under Pending;
+- the end-of-day diff: `PM-017 moved from in_progress to UNMAPPED ('waiting_on_legal').` A move between two different unmapped values is a change, not
+  "UNMAPPED to UNMAPPED". The footer counts unmapped items without naming them and does not count them as open;
+- the weekly report: `PM-022 has a status the tracker does not map: UNMAPPED (the tracker says 'waiting_on_vendor').`
+- proven by `tests/unit/test_unmapped_status.py`.

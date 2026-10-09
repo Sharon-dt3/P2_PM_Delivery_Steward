@@ -234,8 +234,8 @@ def test_the_open_items_that_did_not_change_are_counted_not_named(seeded_db_path
     facts, summary = _summary(seeded_db_path)
 
     _, after = _snapshots(seeded_db_path)
-    unchanged_open = [i for i in after.items if i.status != "done" and i.id not in {"PM-016", "PM-018", "PM-020"}]
-    assert facts.unchanged_open_count == len(unchanged_open) > 0
+    unchanged_open = [i for i in after.items if i.status not in ("done", "UNMAPPED") and i.id not in {"PM-016", "PM-018", "PM-020"}]
+    assert facts.unchanged_open_count == len(unchanged_open) > 0  # PM-022's status is not one the tracker maps (PM-31): it is not counted as open
     assert f"{len(unchanged_open)} other open items did not change today." in summary.content
 
 

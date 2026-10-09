@@ -48,6 +48,9 @@ class ItemDelta(BaseModel):
     kind: str  # one of ADDED / REMOVED / STATUS_CHANGED / FLAPPED / REASSIGNED
     before_status: str | None = None
     after_status: str | None = None
+    # PM-31: the tracker's own value, set only when the normalised status is UNMAPPED, so a status the tracker does not map is never reported without it
+    before_raw: str | None = None
+    after_raw: str | None = None
     transitions_in_window: int = 0
     # Set only when the item's owner differs between the two snapshots, on
     # any kind of delta: a status change or a flap can also be a handover.
@@ -60,6 +63,11 @@ class SnapshotDelta(BaseModel):
     before_taken_at: str
     after_taken_at: str
     items: list[ItemDelta]
+
+
+def _shown(status: str, raw: str | None) -> str:
+    """A status as a person reads it: a mapped one as itself, an UNMAPPED one with the value the tracker actually holds."""
+    return f"{status} ({raw!r})" if status == UNMAPPED and raw is not None else status
 
 
 def _normalize(status: str) -> str:
@@ -105,7 +113,8 @@ def compute_delta(before: ProjectSnapshot, after: ProjectSnapshot, tracker: Trac
                 kind=ADDED,
                 before_status=None,
                 after_status=after_item.status,
-                description=f"{item_id} is new since the previous snapshot (now {after_item.status}).",
+                after_raw=after_item.raw_status if after_item.status == UNMAPPED else None,
+                description=f"{item_id} is new since the previous snapshot (now {_shown(after_item.status, after_item.raw_status)}).",
             )
         )
 
@@ -116,8 +125,9 @@ def compute_delta(before: ProjectSnapshot, after: ProjectSnapshot, tracker: Trac
                 item_id=item_id,
                 kind=REMOVED,
                 before_status=before_item.status,
+                before_raw=before_item.raw_status if before_item.status == UNMAPPED else None,
                 after_status=None,
-                description=f"{item_id} is no longer present in the tracker (was {before_item.status}).",
+                description=f"{item_id} is no longer present in the tracker (was {_shown(before_item.status, before_item.raw_status)}).",
             )
         )
 
@@ -128,8 +138,15 @@ def compute_delta(before: ProjectSnapshot, after: ProjectSnapshot, tracker: Trac
         history = tracker.list_transitions(item_id)
         before_item = before_by_id[item_id]
         after_item = after_by_id[item_id]
-        before_status = _normalize(_status_as_of(history, window_start, fallback=before_item.status))
-        after_status = _normalize(_status_as_of(history, window_end, fallback=after_item.status))
+        before_raw = _status_as_of(history, window_start, fallback=before_item.status)
+        after_raw = _status_as_of(history, window_end, fallback=after_item.status)
+        before_status, after_status = _normalize(before_raw), _normalize(after_raw)
+        # a status the tracker does not map keeps its raw value; two different unmapped values are a real move, not "UNMAPPED to UNMAPPED, no change"
+        raws = {
+            "before_raw": before_raw if before_status == UNMAPPED else None,
+            "after_raw": after_raw if after_status == UNMAPPED else None,
+        }
+        moved_between_unmapped = before_status == after_status == UNMAPPED and before_raw != after_raw
         in_window = [
             record for record in history if window_start < _parse_moment(record.changed_at) <= window_end
         ]
@@ -150,10 +167,10 @@ def compute_delta(before: ProjectSnapshot, after: ProjectSnapshot, tracker: Trac
             else ""
         )
 
-        if before_status != after_status:
+        if before_status != after_status or moved_between_unmapped:
             # More than one transition means it bounced on the way: say so,
             # with the actual path, rather than presenting it as a single move.
-            moved = f"{item_id} moved from {before_status} to {after_status}"
+            moved = f"{item_id} moved from {_shown(before_status, raws['before_raw'])} to {_shown(after_status, raws['after_raw'])}"
             description = (
                 f"{moved} after {len(in_window)} transitions in the window ({path})."
                 if len(in_window) > 1
@@ -165,6 +182,7 @@ def compute_delta(before: ProjectSnapshot, after: ProjectSnapshot, tracker: Trac
                     kind=STATUS_CHANGED,
                     before_status=before_status,
                     after_status=after_status,
+                    **raws,
                     transitions_in_window=len(in_window),
                     description=description + owner_note,
                     **owner,
@@ -183,9 +201,10 @@ def compute_delta(before: ProjectSnapshot, after: ProjectSnapshot, tracker: Trac
                     kind=FLAPPED,
                     before_status=before_status,
                     after_status=after_status,
+                    **raws,
                     transitions_in_window=len(in_window),
                     description=(
-                        f"{item_id} churned ({path}) and ended back at {after_status} -- "
+                        f"{item_id} churned ({path}) and ended back at {_shown(after_status, raws['after_raw'])} -- "
                         "net status unchanged, but it was not quiet." + owner_note
                     ),
                     **owner,

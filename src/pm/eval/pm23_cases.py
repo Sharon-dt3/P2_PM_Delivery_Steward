@@ -29,6 +29,7 @@ reload, an item that moves bucket, identical wording) and checks each number not
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 import tempfile
@@ -55,6 +56,7 @@ from pm.state.store import read_snapshot, save_snapshot
 TZ = "Asia/Colombo"
 MOMENTS = ("2026-09-15T23:59:59+00:00", "2026-09-18T12:00:00+00:00")  # the morning of the 16th; and the 18th, with its blockers
 BUCKETS = ("Committed", "Delivered", "Pending", "Blocked")
+_UNMAPPED_RE = re.compile(r"(PM-\d+) \(.*?\): UNMAPPED, the tracker says (.+?), which is not one of its statuses\.")
 
 Fact = tuple
 
@@ -92,9 +94,9 @@ def facts_from_text(content: str) -> set[Fact]:
             continue
         if title == "Nobody is assigned":
             for line in lines:
-                found = re.match(r"(PM-\d+) \(.*\): nobody is assigned; status (\S+)\.$", line)
+                found = re.match(r"(PM-\d+) \(.*\): nobody is assigned; status (\S+?)(?: \(the tracker says (.+)\))?\.$", line)
                 if found:
-                    facts.add(("unassigned", found.group(1), found.group(2)))
+                    facts.add(("unassigned", found.group(1), found.group(2), ast.literal_eval(found.group(3)) if found.group(3) else ""))
             continue
         facts.add(("owner", title))
         for line in lines:
@@ -104,7 +106,9 @@ def facts_from_text(content: str) -> set[Fact]:
                 facts.add(("commits_only", title, int(re.search(r"(\d+)", line).group(1))))
             else:
                 label, _, rest = line.partition(": ")
-                if label == "Committed":
+                if label == "Unmapped":
+                    facts |= {("unmapped", title, item_id, ast.literal_eval(raw)) for item_id, raw in _UNMAPPED_RE.findall(rest)}  # the raw value, written as Python writes a string
+                elif label == "Committed":
                     facts |= {("due", title, due) for due in re.findall(r"\d{4}-\d{2}-\d{2}", rest)}
                 elif label in BUCKETS:
                     ids = set(re.findall(r"\bPM-\d+\b", rest))
@@ -139,16 +143,17 @@ def facts_from_structure(facts: MorningBriefFacts) -> set[Fact]:
     else:
         out |= {("sprint", "id", sprint.sprint_id), ("sprint", "day", sprint.day_number, sprint.total_days),
                 ("sprint", "done", sprint.done_items, sprint.total_items)}
-    out |= {("unassigned", u.item_id, u.status) for u in facts.unassigned}
+    out |= {("unassigned", u.item_id, u.status, u.raw_status if u.status == "UNMAPPED" else "") for u in facts.unassigned}
     out |= {("unreferenced_commit", c.sha) for c in facts.unreferenced_commits}
     for person in facts.people:
         out.add(("owner", person.name))
         if not person.has_activity:
             out.add(("no_update", person.name))
             continue
-        if not (person.committed or person.delivered or person.pending or person.blocked):
+        if not (person.committed or person.delivered or person.pending or person.blocked or person.unmapped):
             out.add(("commits_only", person.name, person.commit_count))
             continue
+        out |= {("unmapped", person.name, u.item_id, u.raw_status) for u in person.unmapped}
         out |= {("due", person.name, c.due_date_iso) for c in person.committed if c.due_date_iso}
         for label, bucket in (("Delivered", person.delivered), ("Pending", person.pending), ("Blocked", person.blocked)):
             ids = {item.item_id for item in bucket}
