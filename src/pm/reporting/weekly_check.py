@@ -118,3 +118,51 @@ def unexplained_numbers(facts: WeeklyFacts, text: str) -> set[int]:
     # title is that title's own number wherever it is quoted. A model line is already grounded against its own fact, so it cannot bring a number from another.
     allowed |= {int(n) for words in _recorded_text(facts) for n in re.findall(r"\d+", words)}
     return {int(n) for n in re.findall(r"\d+", stripped)} - allowed
+
+
+def verify_stored_report(proposal_id: str, *, db_path) -> list[str]:
+    """PM-30 after the fact: take a weekly report that was proposed (and perhaps approved) and prove it again from what is stored now.
+
+    It reloads the three snapshots the proposal names from storage, recomputes every figure from them and compares it with the figures the report
+    held, checks that every number in the report's text is one of those figures (or sits inside a recorded title), and that the quantities part of the report
+    can be regenerated from the snapshots line for line. Returns the problems; an empty list means the report is exactly what its snapshots say today."""
+    from spine.approval.proposals import ProposalNotFoundError, ProposalStore
+
+    from pm.approval.proposals import WEEKLY_REPORT_PROPOSAL_TYPE
+    from pm.reporting.weekly import compute_weekly_facts, render_weekly_report
+    from pm.state.store import SnapshotNotFoundError, read_snapshot
+
+    try:
+        proposal = ProposalStore(db_path).get(proposal_id)
+    except ProposalNotFoundError:
+        return [f"there is no proposal {proposal_id!r}"]
+    if proposal.type != WEEKLY_REPORT_PROPOSAL_TYPE:
+        return [f"{proposal_id} is a {proposal.type} proposal, not a weekly report"]
+    named = proposal.payload.get("snapshots") or {}
+    loaded: dict[str, ProjectSnapshot] = {}
+    problems: list[str] = []
+    for role in ("end", "start", "previous"):
+        try:
+            loaded[role] = read_snapshot(named[role], db_path)
+        except (KeyError, SnapshotNotFoundError):
+            problems.append(f"the {role} snapshot ({named.get(role)!r}) is not stored, so the report cannot be recomputed")
+    if problems:
+        return problems
+
+    end, start, previous = loaded["end"], loaded["start"], loaded["previous"]
+    facts = compute_weekly_facts(end, start, previous)
+    text = proposal.payload.get("content", "")
+    held = {f["key"]: f["value"] for f in proposal.payload.get("figures", [])}
+    fresh = recompute_figures(end, start, previous)
+    for key in sorted(set(fresh) | set(held)):
+        if key not in held:
+            problems.append(f"{key}: recomputes to {fresh[key]} but the report did not state it")
+        elif key not in fresh:
+            problems.append(f"{key}: the report stated {held[key]} but the snapshots do not produce it")
+        elif held[key] != fresh[key]:
+            problems.append(f"{key}: the report stated {held[key]} but the snapshots give {fresh[key]}")
+    problems += [f"the text states {n}, which is not one of the report's figures" for n in sorted(unexplained_numbers(facts, text))]
+    stored_lines = set(text.splitlines())
+    problems += [f"the report no longer matches its snapshots: the line {line!r} is not in it"
+                 for line in render_weekly_report(facts).splitlines() if line.strip() and line not in stored_lines]
+    return problems

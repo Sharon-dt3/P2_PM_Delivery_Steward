@@ -42,6 +42,17 @@ each figure against what the report states, and every number in the report's tex
 markers are set aside), against the figures, so a number the model brought in cannot be in the text. The job reads the snapshots **back from storage** before computing,
 and a report that does not recompute is never offered as a proposal: the problems are printed instead.
 
+### Proving a report again, later
+
+`scripts/verify_weekly_report.py --latest` (or `--proposal <id>`) reloads the three stored snapshots a proposed or approved report names, recomputes every figure from
+them, and checks (1) each figure against what the report stated, (2) that every number in the text is one of those figures (or sits inside a recorded title), and
+(3) that the quantities part of the report regenerates from the snapshots line for line. It prints what no longer recomputes and exits 1 if anything does; it changes
+nothing. A snapshot that was changed or deleted since is named. `pm.reporting.weekly_check.verify_stored_report` is the same check as a function.
+
+`tests/unit/test_weekly_reproducibility.py` is the acceptance test: the check passes for the report of **every day** the seeded project has history for (47 week-endings,
+with and without the narrative, including the awkward weeks: no sprint, no percentage, an unmapped status, items added after planning), the report states every figure
+it recomputes and no more, and a figure, a line, a snapshot or a number that was changed afterwards is caught.
+
 ## The proposal
 
 Type `weekly_status_report`, one per week ending (idempotent). Its card in Teams has **Approve** and **Reject**.
