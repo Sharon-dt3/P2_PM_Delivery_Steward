@@ -75,3 +75,26 @@ def test_a_line_that_is_not_a_blocker_line_at_all_is_still_refused():
     invented = brief.model_copy(update={"content": brief.content.replace("## Blockers\n", "## Blockers\n- [high] RISK-099: The vendor has cancelled the contract.\n", 1)})
 
     assert any("neither a grounded blocker line nor a marked fact" in p for p in count_fabrications(invented, facts))
+
+
+# --- the word check: another form of a word the fact uses is not a new claim --------------------------------------------------------------------
+
+FACT = 'Olivia Dupont committed: "Vendor says the new billing API will be ready 2026-09-25; cutting over once it\'s live." (due 2026-09-25).'
+
+
+def words_not_in_fact(text):
+    from pm.eval.pm12_cases import _unsupported_words
+
+    return _unsupported_words(text, FACT)
+
+
+def test_another_form_of_a_word_the_fact_uses_is_not_an_unsupported_word():
+    assert words_not_in_fact("Olivia Dupont committed to cutting over, the vendor saying the billing API is ready.") == []
+
+
+def test_a_word_the_fact_does_not_have_in_any_form_is_still_an_unsupported_word():
+    assert "cancelled" in words_not_in_fact("Olivia Dupont committed to cutting over, but the vendor cancelled the billing API.")
+
+
+def test_a_different_word_that_merely_ends_alike_is_still_an_unsupported_word():
+    assert "ceasing" in words_not_in_fact("Olivia Dupont committed to ceasing the cutover.")  # `cease` is not `say`, whatever the ending

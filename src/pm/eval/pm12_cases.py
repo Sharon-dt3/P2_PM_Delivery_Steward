@@ -312,6 +312,15 @@ def _details_by_ref(facts: MorningBriefFacts) -> dict[tuple[str, str], list[str]
     return table
 
 
+def _probe_root(word: str) -> str:
+    """A word without one common ending, so that `says` and `saying` (or `cancel` and `cancelled`) are the same word. Another form of a word the fact
+    already uses claims nothing new; a different word still shares neither this root nor its first four letters."""
+    for ending in ("ing", "ed", "es", "s"):
+        if word.endswith(ending) and len(word) - len(ending) >= 3:
+            return word[: -len(ending)]
+    return word
+
+
 def _unsupported_words(text: str, detail: str) -> list[str]:
     """Words in `text` that neither echo a word of `detail` nor are plain
     connecting/status words. Matching is deliberately lenient (shared first
@@ -321,7 +330,7 @@ def _unsupported_words(text: str, detail: str) -> list[str]:
     out: list[str] = []
     for word in _PROBE_WORD_RE.findall(_PROBE_ID_RE.sub(" ", text)):
         w = word.lower()
-        if len(w) <= 2 or any(w.startswith(k[:4]) or k.startswith(w[:4]) for k in known if len(k) >= 3):
+        if len(w) <= 2 or any(w.startswith(k[:4]) or k.startswith(w[:4]) or _probe_root(w) == _probe_root(k) for k in known if len(k) >= 3):
             continue
         if word not in out:
             out.append(word)
