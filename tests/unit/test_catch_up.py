@@ -16,6 +16,7 @@ import pytest
 from apscheduler.events import EVENT_JOB_EXECUTED, JobExecutionEvent
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 from p1.adapters.teams_publisher_mock import LogPublisher
 from spine.approval.proposals import PENDING, ProposalStore
 from spine.scheduling.catchup import CatchUp, RunLedger, latest_fire
@@ -151,7 +152,7 @@ def test_a_job_that_cannot_be_told_which_moment_to_work_for_is_left_alone(tmp_pa
 
 def test_a_job_that_is_not_on_a_cron_schedule_is_not_a_missed_run(tmp_path):
     scheduler = BackgroundScheduler()
-    scheduler.add_job(job, trigger="interval", minutes=5, id="poll")
+    scheduler.add_job(job, trigger=IntervalTrigger(minutes=5, start_date=ARMED), id="poll")  # it has been "due" every five minutes since Tuesday
     catch_up = CatchUp(scheduler, RunLedger(tmp_path / "ledger.db", now=ARMED), hold=lambda func: {})
 
     assert catch_up.plan(SAT_MORNING) == []
