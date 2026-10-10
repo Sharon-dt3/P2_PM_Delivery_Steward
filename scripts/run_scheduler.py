@@ -42,6 +42,7 @@ for _path in (_REPO_ROOT / "src", _P1_REPO_ROOT / "src", _REPO_ROOT / "packages"
 from pm.approval.settings import describe_settings
 from pm.jobs.end_of_day_job import run_end_of_day_job
 from pm.jobs.morning_brief_job import run_morning_brief_job
+from pm.scheduling import catch_up as catch_up_on_startup
 from pm.scheduling import weekly_report as weekly
 from pm.scheduling.channel_briefs import add_channel_brief_jobs
 from pm.scheduling.clock import (
@@ -138,6 +139,9 @@ def main(argv: list[str] | None = None, *, block: bool = True) -> int:
                              "never sent (default: PM_WEEKLY_REPORT=1)")
     parser.add_argument("--weekly-gateway", choices=["llm", "scripted", "none"], default="llm",
                         help="who writes the weekly report's narrative: the model set by the environment, a stand-in, or nobody")
+    parser.add_argument("--no-catch-up", action="store_true",
+                        help="do not make up the jobs that were due while the scheduler was stopped (default: make up each job's latest missed run, up to "
+                             "PM_CATCH_UP_HOURS back, default 72; one that is more than 6 hours late waits for a person's approval)")
     args = parser.parse_args(argv)
     channels = [c.strip() for c in args.channel_briefs.split(",") if c.strip()]
 
@@ -186,8 +190,10 @@ def main(argv: list[str] | None = None, *, block: bool = True) -> int:
             _print_weekly(scheduler, weekly_schedule)
         return 0
 
+    catch_up = None if args.no_catch_up else catch_up_on_startup.enable(scheduler, args.db)  # records every run that finishes; queues the ones that were missed
     scheduler.start()
     print("Scheduler running. Ctrl-C to stop.")
+    _print_catch_up(catch_up)
     if sample:
         _print_schedule(scheduler, config)
     _print_channel_briefs(scheduler, entries)
@@ -204,6 +210,19 @@ def main(argv: list[str] | None = None, *, block: bool = True) -> int:
     finally:
         scheduler.shutdown(wait=False)
     return 0
+
+
+def _print_catch_up(report) -> None:
+    if report is None or not report.enabled:
+        print("Catch-up on startup: off.")
+        return
+    if report.just_armed:
+        print("Catch-up on startup: armed now. From here on, a job missed while this is stopped is made up at the next start.")
+    for item in report.items:
+        held = " (late: waits for a person's approval)" if item.late else ""
+        print(f"Catch-up: making up {item.job_id}, scheduled for {item.scheduled_for.isoformat()}{held}")
+    if not report.items and not report.just_armed:
+        print("Catch-up on startup: nothing was missed.")
 
 
 if __name__ == "__main__":
