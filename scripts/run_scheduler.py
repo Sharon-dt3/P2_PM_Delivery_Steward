@@ -14,6 +14,9 @@ approve it (scripts/approve.py), or, if PM_AUTO_APPROVE=1, the system does when
 it is safe. Nothing reaches Teams unless TEAMS_PUBLISHER_MODE=power_automate;
 the default is the log-only publisher. See .env.example.
 
+When the scheduler starts it makes up the latest run each job missed while it was stopped (docs/catch_up.md): the first start only begins watching,
+and a run more than six hours late waits for a person's approval. --no-catch-up turns that off.
+
 --gateway scripted writes the brief from the facts instantly with no model (a
 demo of the plumbing); --gateway llm (default) uses the model set by
 LLM_PROVIDER, and on a laptop's local model takes about 15 minutes.
